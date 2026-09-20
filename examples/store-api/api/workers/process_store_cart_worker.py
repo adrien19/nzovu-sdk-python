@@ -73,7 +73,7 @@ async def process_store_cart(client: ChronoqueueClient):
                 logger.info("⏳ Simulating 60s processing time (heartbeat keeps message alive)...")
                 logger.info("   💓 Heartbeat is automatically renewing the message lease every ~1s")
 
-                time.sleep(360) # Simulate long processing (60 seconds)
+                time.sleep(60) # Simulate long processing (60 seconds)
 
                 logger.info("✅ Processing completed after 60s")
 
@@ -82,7 +82,7 @@ async def process_store_cart(client: ChronoqueueClient):
                 )
                 post_msg_params = PostMessageParams(
                     queue_name=QUEUE_NAME_CHECKOUT_CART,
-                    message_id=response.message.message_id,
+                    message_id=response.message.message_id + "-checkout",
                     data=checkout_data,
                     options=post_msg_options,
                 )

@@ -7,7 +7,7 @@ Uses AsyncChronoqueueClient for non-blocking queue creation operations.
 
 import asyncio
 import logging
-from chronoqueue.utils import QueueOptions, QueueType, LeasePolicyOptions
+from chronoqueue.utils import QueueOptions, QueueType, LeasePolicyOptions, MessageRetentionPolicy, RetentionMode
 from chronoqueue.async_client import AsyncChronoqueueClient
 from config.settings import QUEUE_NAME_STORE_CART, QUEUE_NAME_CHECKOUT_CART, CHECKOUT_QUEUE_EXCLUSIVE_KEY
 
@@ -34,13 +34,17 @@ async def create_store_cart_queue_async(async_client: AsyncChronoqueueClient):
                 options=QueueOptions(
                     type=QueueType.SIMPLE,
                     max_attempts=max_retries,
-                    # lease_duration="5s",
                     lease_policy=LeasePolicyOptions(
                         base_lease="5s",
                         max_extension="20m",
                         heartbeat_timeout="5s",
                         extend_step="30s",
-                    )
+                    ),
+                    retention_policy=MessageRetentionPolicy(
+                        mode=RetentionMode.RETAIN_DURATION,
+                        # retention_seconds=86400,  # 24 hours
+                        retention_seconds=60,  # 1 hour
+                    ),
                 ),
             )
 
@@ -81,14 +85,18 @@ async def create_checkout_cart_queue_async(async_client: AsyncChronoqueueClient)
                 options=QueueOptions(
                     type=QueueType.EXCLUSIVE,
                     max_attempts=max_retries,
-                    # lease_duration="5s",
                     exclusivity_key=CHECKOUT_QUEUE_EXCLUSIVE_KEY,
                     lease_policy=LeasePolicyOptions(
                         base_lease="5s",
                         max_extension="10m",
                         heartbeat_timeout="15s",
                         extend_step="1m",
-                    )
+                    ),
+                    retention_policy=MessageRetentionPolicy(
+                        mode=RetentionMode.RETAIN_DURATION,
+                        # retention_seconds=86400,  # 24 hours
+                        retention_seconds=60,  # 1 hour
+                    ),
                 ),
             )
 

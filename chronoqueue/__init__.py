@@ -37,6 +37,7 @@ from .exceptions import InitializationError, RpcOperationError
 from .utils import (
     AcknowledgeMessageParams,
     LeasePolicyOptions,
+    MessageRetentionPolicy,
     MessageState,
     PeekQueueMessagesParams,
     PostMessageOptions,
@@ -44,6 +45,7 @@ from .utils import (
     QueueOptions,
     QueueType,
     ResponseWrapper,
+    RetentionMode,
     ScheduleOptions,
     ScheduleState,
     SchemaOptions,

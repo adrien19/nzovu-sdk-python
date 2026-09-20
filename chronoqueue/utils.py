@@ -13,6 +13,7 @@ from google.protobuf.struct_pb2 import Struct, Value
 from .api.common.v1.common_pb2 import Payload  # type: ignore[attr-defined]
 from .api.message.v1.message_pb2 import Message  # type: ignore[attr-defined]
 from .api.queue.v1.queue_pb2 import QueueType  # type: ignore[attr-defined]
+from .api.queue.v1.queue_pb2 import MessageRetentionPolicy as _MessageRetentionPolicyProto  # type: ignore[attr-defined]
 from .api.queueservice.v1.request_response_pb2 import PostMessageRequest  # type: ignore[attr-defined]
 from .api.schedule.v1.schedule_pb2 import Schedule  # type: ignore[attr-defined]
 
@@ -143,6 +144,42 @@ class TransactionMode(Enum):
 
     ALL_OR_NOTHING = "ALL_OR_NOTHING"
     BEST_EFFORT = "BEST_EFFORT"
+
+
+class RetentionMode(Enum):
+    """
+    Enumeration representing message retention modes for a queue.
+
+    Attributes:
+    ----------
+    DELETE_IMMEDIATELY : RetentionMode
+        Remove message from the database immediately upon acknowledgment (default).
+    RETAIN_DURATION : RetentionMode
+        Soft-delete messages and remove them after retention_seconds.
+    RETAIN_FOREVER : RetentionMode
+        Soft-delete messages and never auto-remove them.
+    """
+
+    DELETE_IMMEDIATELY = _MessageRetentionPolicyProto.Mode.DELETE_IMMEDIATELY
+    RETAIN_DURATION = _MessageRetentionPolicyProto.Mode.RETAIN_DURATION
+    RETAIN_FOREVER = _MessageRetentionPolicyProto.Mode.RETAIN_FOREVER
+
+
+@dataclass
+class MessageRetentionPolicy:
+    """
+    Controls how long messages are retained after completion or error.
+
+    Attributes:
+    ----------
+    mode : RetentionMode
+        Retention strategy. DELETE_IMMEDIATELY, RETAIN_DURATION, or RETAIN_FOREVER.
+    retention_seconds : int, optional
+        Seconds to retain messages. Only used with RETAIN_DURATION mode.
+    """
+
+    mode: RetentionMode = RetentionMode.DELETE_IMMEDIATELY
+    retention_seconds: int = 0
 
 
 def string_to_duration(s: str) -> Duration:
@@ -353,14 +390,14 @@ class MessagePriorityRange:
 
     Attributes:
     ----------
-    min : str, optional (default="-inf")
-        Minimum priority level.
-    max : str, optional (default="+inf")
-        Maximum priority level.
+    min : int, optional (default=0)
+        Minimum priority level (inclusive). Valid range: 0–4.
+    max : int, optional (default=4)
+        Maximum priority level (inclusive). Valid range: 0–4.
     """
 
-    min: str = "-inf"
-    max: str = "+inf"
+    min: int = 0
+    max: int = 4
 
 
 @dataclass
@@ -441,6 +478,7 @@ class QueueOptions:
     allowed_content_types: Optional[list] = None
     priority_config: Optional[dict] = None
     lease_policy: Optional[LeasePolicyOptions] = None
+    retention_policy: Optional[MessageRetentionPolicy] = None
 
     def __post_init__(self):
         duration_pattern = re.compile(r"^\d+(\.\d+)?[smhd]$")

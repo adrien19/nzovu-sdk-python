@@ -99,7 +99,7 @@ async def process_store_cart_async(async_client: AsyncChronoqueueClient):
             )
             post_msg_params = PostMessageParams(
                 queue_name=QUEUE_NAME_CHECKOUT_CART,
-                message_id=message.message_id,
+                message_id=message.message_id + "-checkout",
                 data=checkout_data,
                 options=post_msg_options,
             )

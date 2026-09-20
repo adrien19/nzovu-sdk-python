@@ -8,7 +8,7 @@ import pytest
 from chronoqueue.api.queueservice.v1 import request_response_pb2, service_pb2_grpc
 from chronoqueue.client import ChronoqueueClient
 from chronoqueue.exceptions import RpcOperationError
-from chronoqueue.utils import AcknowledgeMessageParams, MessageState, PeekQueueMessagesParams, PostMessageParams, TransactionMode
+from chronoqueue.utils import AcknowledgeMessageParams, MessageRetentionPolicy, MessageState, PeekQueueMessagesParams, PostMessageParams, QueueOptions, RetentionMode, TransactionMode
 
 
 @pytest.fixture
@@ -45,6 +45,45 @@ def test_create_queue(mock_client: ChronoqueueClient):
     # Assert the expected behavior
     mock_client.stub.CreateQueue.assert_called_once()
     assert response.to_proto() == mock_response
+
+
+def test_create_queue_with_retention_duration(mock_client: ChronoqueueClient):
+    mock_response = request_response_pb2.CreateQueueResponse()
+    mock_client.stub.CreateQueue.return_value = mock_response
+
+    options = QueueOptions(
+        retention_policy=MessageRetentionPolicy(mode=RetentionMode.RETAIN_DURATION, retention_seconds=86400)
+    )
+    mock_client.create_queue(name="test_queue", options=options)
+
+    call_args = mock_client.stub.CreateQueue.call_args[0][0]
+    assert call_args.metadata.message_retention_policy.mode == 1  # RETAIN_DURATION
+    assert call_args.metadata.message_retention_policy.retention_seconds == 86400
+
+
+def test_create_queue_with_retention_forever(mock_client: ChronoqueueClient):
+    mock_response = request_response_pb2.CreateQueueResponse()
+    mock_client.stub.CreateQueue.return_value = mock_response
+
+    options = QueueOptions(retention_policy=MessageRetentionPolicy(mode=RetentionMode.RETAIN_FOREVER))
+    mock_client.create_queue(name="test_queue", options=options)
+
+    call_args = mock_client.stub.CreateQueue.call_args[0][0]
+    assert call_args.metadata.message_retention_policy.mode == 2  # RETAIN_FOREVER
+
+
+def test_create_queue_with_lease_policy(mock_client: ChronoqueueClient):
+    from chronoqueue.utils import LeasePolicyOptions
+
+    mock_response = request_response_pb2.CreateQueueResponse()
+    mock_client.stub.CreateQueue.return_value = mock_response
+
+    options = QueueOptions(lease_policy=LeasePolicyOptions(base_lease="30s", heartbeat_timeout="10s"))
+    mock_client.create_queue(name="test_queue", options=options)
+
+    call_args = mock_client.stub.CreateQueue.call_args[0][0]
+    assert call_args.metadata.lease_policy.base_lease.seconds == 30
+    assert call_args.metadata.lease_policy.heartbeat_timeout.seconds == 10
 
 
 def test_error_scenario(mock_client: ChronoqueueClient):
@@ -141,10 +180,25 @@ def test_renew_message_lease(mock_client: ChronoqueueClient):
     mock_client.stub.RenewMessageLease.return_value = mock_response
 
     # Call the client's method
-    response = mock_client.renew_message_lease(message_id="12345", new_lease_duration="40s")
+    response = mock_client.renew_message_lease(queue_name="test_queue", message_id="12345", new_lease_duration="40s")
 
     # Assert the expected behavior
     mock_client.stub.RenewMessageLease.assert_called_once()
+    call_args = mock_client.stub.RenewMessageLease.call_args[0][0]
+    assert call_args.queue_name == "test_queue"
+    assert call_args.message_id == "12345"
+    assert response.to_proto() == mock_response
+
+
+def test_list_queues(mock_client: ChronoqueueClient):
+    mock_response = request_response_pb2.ListQueuesResponse()
+    mock_client.stub.ListQueues.return_value = mock_response
+
+    response = mock_client.list_queues(prefix="order_")
+
+    mock_client.stub.ListQueues.assert_called_once()
+    call_args = mock_client.stub.ListQueues.call_args[0][0]
+    assert call_args.prefix == "order_"
     assert response.to_proto() == mock_response
 
 
@@ -162,6 +216,22 @@ def test_peek_queue_messages(mock_client: ChronoqueueClient):
     # Assert the expected behavior
     mock_client.stub.PeekQueueMessages.assert_called_once()
     assert response.to_proto() == mock_response
+
+
+def test_peek_queue_messages_with_priority_range(mock_client: ChronoqueueClient):
+    from chronoqueue.utils import MessagePriorityRange
+
+    mock_response = request_response_pb2.PeekQueueMessagesResponse()
+    mock_client.stub.PeekQueueMessages.return_value = mock_response
+
+    params = PeekQueueMessagesParams(
+        queue_name="test_queue", limit=5, priority_range=MessagePriorityRange(min=2, max=4)
+    )
+    mock_client.peek_queue_messages(params=params)
+
+    call_args = mock_client.stub.PeekQueueMessages.call_args[0][0]
+    assert call_args.priority_range.min == 2
+    assert call_args.priority_range.max == 4
 
 
 def test_get_queue_state(mock_client: ChronoqueueClient):

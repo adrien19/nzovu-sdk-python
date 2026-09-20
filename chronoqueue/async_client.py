@@ -56,6 +56,7 @@ from .utils import (
     TlsConfig,
     TransactionMode,
     _create_post_message_request,
+    build_lease_policy,
     dict_to_protobuf_struct,
     string_to_duration,
 )
@@ -239,6 +240,16 @@ class AsyncChronoqueueClient:
                     from google.protobuf import json_format
                     priority_config_pb = json_format.ParseDict(options.priority_config, queue_pb2.PriorityConfig())
                     metadata.priority_config.CopyFrom(priority_config_pb)
+                if options.lease_policy:
+                    lp = build_lease_policy(options.lease_policy)
+                    if lp:
+                        metadata.lease_policy.CopyFrom(lp)
+                if options.retention_policy:
+                    retention_pb = queue_pb2.MessageRetentionPolicy(
+                        mode=options.retention_policy.mode.value,
+                        retention_seconds=options.retention_policy.retention_seconds,
+                    )
+                    metadata.message_retention_policy.CopyFrom(retention_pb)
             request = request_response_pb2.CreateQueueRequest(name=name, metadata=metadata)
             response = await self.stub.CreateQueue(request)
             return ResponseWrapper(response_protobuf=response)
@@ -279,6 +290,36 @@ class AsyncChronoqueueClient:
         except grpc.RpcError as e:
             logging.error(f"Error deleting queue: {e.details()}")
             error = RpcOperationError(f"Failed to delete queue due to: {e.details()}")
+            self._handle_error(error, handler=error_handler)
+
+    async def list_queues(self, prefix: str = "", error_handler=None) -> ResponseWrapper:
+        """
+        List all queues in the Chronoqueue service.
+
+        Parameters:
+        ----------
+        prefix : str, optional
+            Filter queues by name prefix. Returns all queues if empty.
+        error_handler : callable, optional
+            Custom error handler function.
+
+        Returns:
+        -------
+        ResponseWrapper
+            Wrapper containing the ListQueuesResponse with a list of queues.
+
+        Raises:
+        ------
+        RpcOperationError
+            If the gRPC operation fails and no custom error handler is provided.
+        """
+        try:
+            request = request_response_pb2.ListQueuesRequest(prefix=prefix)
+            response = await self.stub.ListQueues(request)
+            return ResponseWrapper(response_protobuf=response)
+        except grpc.RpcError as e:
+            logging.error(f"Error listing queues: {e.details()}")
+            error = RpcOperationError(f"Failed to list queues due to: {e.details()}")
             self._handle_error(error, handler=error_handler)
 
     async def __aenter__(self):
@@ -743,7 +784,7 @@ class AsyncChronoqueueClient:
         return list(self._heartbeat_tasks.keys())
 
     async def renew_message_lease(
-        self, message_id: str, new_lease_duration: str, error_handler=None
+        self, queue_name: str, message_id: str, new_lease_duration: str, error_handler=None
     ) -> ResponseWrapper:
         """
         Renew the lease duration for a message.
@@ -773,7 +814,7 @@ class AsyncChronoqueueClient:
         """
         try:
             request = request_response_pb2.RenewMessageLeaseRequest(
-                message_id=message_id, lease_duration=string_to_duration(new_lease_duration)
+                queue_name=queue_name, message_id=message_id, lease_duration=string_to_duration(new_lease_duration)
             )
             response = await self.stub.RenewMessageLease(request)
             return ResponseWrapper(response_protobuf=response)
@@ -810,8 +851,13 @@ class AsyncChronoqueueClient:
         >>> response = await client.peek_queue_messages(params)
         """
         try:
+            priority_range = None
+            if params.priority_range is not None:
+                priority_range = request_response_pb2.PeekQueueMessagesRequest.PriorityRange(
+                    min=params.priority_range.min, max=params.priority_range.max
+                )
             request = request_response_pb2.PeekQueueMessagesRequest(
-                queue_name=params.queue_name, limit=params.limit, priority_range=params.priority_range
+                queue_name=params.queue_name, limit=params.limit, priority_range=priority_range
             )
             response = await self.stub.PeekQueueMessages(request)
             return ResponseWrapper(response_protobuf=response)
@@ -1214,6 +1260,43 @@ class AsyncChronoqueueClient:
         except grpc.RpcError as e:
             logging.error(f"Error validating calendar schedule: {e.details()}")
             error = RpcOperationError(f"Failed to validate calendar schedule due to: {e.details()}")
+            self._handle_error(error, handler=error_handler)
+
+    async def preview_calendar_schedule(
+        self, calendar_schedule: dict, count: int = 10, error_handler=None
+    ) -> ResponseWrapper:
+        """
+        Preview upcoming execution times for a calendar schedule.
+
+        Parameters:
+        ----------
+        calendar_schedule : dict
+            Dictionary representation of a CalendarSchedule configuration to preview.
+        count : int, optional
+            Number of upcoming execution times to generate. Default is 10.
+        error_handler : callable, optional
+            Custom error handling function.
+
+        Returns:
+        -------
+        ResponseWrapper
+            Wrapper containing the PreviewCalendarScheduleResponse with execution times.
+
+        Raises:
+        ------
+        RpcOperationError
+            If preview request fails and no custom error handler is provided.
+        """
+        try:
+            calendar_schedule_pb = json_format.ParseDict(calendar_schedule, schedule_pb2.CalendarSchedule())
+            request = request_response_pb2.PreviewCalendarScheduleRequest(
+                calendar_schedule=calendar_schedule_pb, count=count
+            )
+            response = await self.stub.PreviewCalendarSchedule(request)
+            return ResponseWrapper(response_protobuf=response)
+        except grpc.RpcError as e:
+            logging.error(f"Error previewing calendar schedule: {e.details()}")
+            error = RpcOperationError(f"Failed to preview calendar schedule due to: {e.details()}")
             self._handle_error(error, handler=error_handler)
 
     async def register_schema(self, schema_id: str, options: SchemaOptions, error_handler=None) -> ResponseWrapper:

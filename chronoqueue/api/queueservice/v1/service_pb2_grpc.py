@@ -405,7 +405,7 @@ class QueueServiceServicer(object):
         "message": {
         "metadata": {
         "payload": {"data": "..."},
-        "priority": 100
+        "priority": 4
         }
         }
         }

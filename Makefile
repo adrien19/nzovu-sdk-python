@@ -34,12 +34,12 @@ help:
 # Install production dependencies
 install:
 	@echo "Installing production dependencies..."
-	poetry install --only main
+	$(PYTHON) -m pip install --user grpcio protobuf pydantic
 
 # Install development dependencies
 install-dev:
 	@echo "Installing development dependencies..."
-	poetry install
+	$(PYTHON) -m pip install --user grpcio protobuf pydantic grpcio-tools mypy-protobuf pytest pytest-cov pytest-asyncio black isort flake8 mypy
 
 # Lock dependencies
 lock:
@@ -101,7 +101,7 @@ gen-proto: setup-dirs check-proto
 	@find $(PROTO_PATH) -name "*.proto" -type f | while read proto_file; do \
 		echo "Processing $$proto_file..."; \
 	done
-	@poetry run $(PYTHON) -m grpc_tools.protoc \
+	@$(PYTHON) -m grpc_tools.protoc \
 		-I=. \
 		-I=$(PROTO_PATH) \
 		--python_out=$(OUTPUT_PATH) \
@@ -125,8 +125,8 @@ gen-proto: setup-dirs check-proto
 	@echo "Creating __init__.py files in all directories..."
 	@find $(OUTPUT_PATH) -type d -exec touch {}/__init__.py \;
 	@echo "Formatting generated code..."
-	@poetry run black $(OUTPUT_PATH) --line-length=120 --quiet --exclude='__pycache__|\.pyc' --target-version=py310 || true
-	@poetry run isort $(OUTPUT_PATH) --profile black --line-length 120 --quiet --skip-glob='*/__pycache__/*' || true
+	@$(PYTHON) -m black $(OUTPUT_PATH) --line-length=120 --quiet --exclude='__pycache__|\.pyc' --target-version=py310 || true
+	@$(PYTHON) -m isort $(OUTPUT_PATH) --profile black --line-length 120 --quiet --skip-glob='*/__pycache__/*' || true
 	@echo "Python gRPC classes generated successfully!"
 	@echo "Generated $$(find $(OUTPUT_PATH) -name "*.py" -type f | wc -l) Python file(s)"
 
@@ -159,28 +159,28 @@ clean-all: clean
 # Run unit tests
 test:
 	@echo "Running unit tests..."
-	poetry run pytest tests/ -v
+	$(PYTHON) -m pytest tests/ -v
 
 # Run tests with coverage
 test-coverage:
 	@echo "Running unit tests with coverage..."
-	poetry run pytest tests/ -v --cov=chronoqueue --cov-report=term-missing --cov-report=html
+	$(PYTHON) -m pytest tests/ -v --cov=chronoqueue --cov-report=term-missing --cov-report=html
 
 # Run linting checks
 lint:
 	@echo "Running linting checks..."
 	@echo "Checking with flake8..."
-	@poetry run flake8 chronoqueue/ tests/ --max-line-length=120 --count --statistics || true
+	@$(PYTHON) -m flake8 chronoqueue/ tests/ --max-line-length=120 --count --statistics || true
 	@echo "Checking with mypy..."
-	@poetry run mypy chronoqueue/ || true
+	@$(PYTHON) -m mypy chronoqueue/ || true
 
 # Format code
 format:
 	@echo "Formatting code with black..."
-	@poetry run black chronoqueue/ tests/ --line-length=120 \
+	@$(PYTHON) -m black chronoqueue/ tests/ --line-length=120 \
 		--exclude='/(common|google|message|queue|queueservice|schedule|schema)/'
 	@echo "Sorting imports with isort..."
-	@poetry run isort chronoqueue/ tests/ \
+	@$(PYTHON) -m isort chronoqueue/ tests/ \
 		--skip chronoqueue/api/common \
 		--skip chronoqueue/api/google \
 		--skip chronoqueue/api/message \
@@ -193,7 +193,7 @@ format:
 # Type checking
 typecheck:
 	@echo "Running type checking with mypy..."
-	@poetry run mypy chronoqueue/ || true
+	@$(PYTHON) -m mypy chronoqueue/ || true
 
 # Build package
 build: clean

@@ -28,6 +28,7 @@ from .utils import (
     TlsConfig,
     TransactionMode,
     _create_post_message_request,
+    build_lease_policy,
     dict_to_protobuf_struct,
     string_to_duration,
 )
@@ -248,6 +249,16 @@ class ChronoqueueClient:
                     from google.protobuf import json_format
                     priority_config_pb = json_format.ParseDict(options.priority_config, queue_pb2.PriorityConfig())
                     metadata.priority_config.CopyFrom(priority_config_pb)
+                if options.lease_policy:
+                    lp = build_lease_policy(options.lease_policy)
+                    if lp:
+                        metadata.lease_policy.CopyFrom(lp)
+                if options.retention_policy:
+                    retention_pb = queue_pb2.MessageRetentionPolicy(
+                        mode=options.retention_policy.mode.value,
+                        retention_seconds=options.retention_policy.retention_seconds,
+                    )
+                    metadata.message_retention_policy.CopyFrom(retention_pb)
             request = request_response_pb2.CreateQueueRequest(name=name, metadata=metadata)
             response = self.stub.CreateQueue(request)
             return ResponseWrapper(response_protobuf=response)
@@ -298,6 +309,36 @@ class ChronoqueueClient:
         except grpc.RpcError as e:
             logging.error(f"Error deleting queue: {e.details()}")
             error = RpcOperationError(f"Failed to delete queue due to: {e.details()}")
+            self._handle_error(error, handler=error_handler)
+
+    def list_queues(self, prefix: str = "", error_handler=None) -> ResponseWrapper:
+        """
+        List all queues in the Chronoqueue service.
+
+        Parameters:
+        ----------
+        prefix : str, optional
+            Filter queues by name prefix. Returns all queues if empty.
+        error_handler : callable, optional
+            Custom error handler function.
+
+        Returns:
+        -------
+        ResponseWrapper
+            Wrapper containing the ListQueuesResponse with a list of queues.
+
+        Raises:
+        ------
+        RpcOperationError
+            If the gRPC operation fails and no custom error handler is provided.
+        """
+        try:
+            request = request_response_pb2.ListQueuesRequest(prefix=prefix)
+            response = self.stub.ListQueues(request)
+            return ResponseWrapper(response_protobuf=response)
+        except grpc.RpcError as e:
+            logging.error(f"Error listing queues: {e.details()}")
+            error = RpcOperationError(f"Failed to list queues due to: {e.details()}")
             self._handle_error(error, handler=error_handler)
 
     def post_message(self, msg_params: PostMessageParams, error_handler=None) -> ResponseWrapper:
@@ -891,7 +932,7 @@ class ChronoqueueClient:
             error = RpcOperationError(f"Failed to cancel message due to: {e.details()}")
             self._handle_error(error, handler=error_handler)
 
-    def renew_message_lease(self, message_id: str, new_lease_duration: str, error_handler=None) -> ResponseWrapper:
+    def renew_message_lease(self, queue_name: str, message_id: str, new_lease_duration: str, error_handler=None) -> ResponseWrapper:
         """
         Renews the lease duration of a specified message in the Chronoqueue service.
 
@@ -945,7 +986,7 @@ class ChronoqueueClient:
             pb_release_duration: Duration = string_to_duration(new_lease_duration)
 
             request = request_response_pb2.RenewMessageLeaseRequest(
-                message_id=message_id, lease_duration=pb_release_duration
+                queue_name=queue_name, message_id=message_id, lease_duration=pb_release_duration
             )
             response = self.stub.RenewMessageLease(request)
             return ResponseWrapper(response_protobuf=response)
@@ -1000,8 +1041,13 @@ class ChronoqueueClient:
 
         """
         try:
+            priority_range = None
+            if params.priority_range is not None:
+                priority_range = request_response_pb2.PeekQueueMessagesRequest.PriorityRange(
+                    min=params.priority_range.min, max=params.priority_range.max
+                )
             request = request_response_pb2.PeekQueueMessagesRequest(
-                queue_name=params.queue_name, limit=params.limit, priority_range=params.priority_range
+                queue_name=params.queue_name, limit=params.limit, priority_range=priority_range
             )
             response = self.stub.PeekQueueMessages(request)
             return ResponseWrapper(response_protobuf=response)

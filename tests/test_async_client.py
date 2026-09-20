@@ -18,6 +18,9 @@ from chronoqueue.utils import (
     QueueOptions,
     ScheduleOptions,
     SchemaOptions,
+    LeasePolicyOptions,
+    MessageRetentionPolicy,
+    RetentionMode,
     TransactionMode,
 )
 
@@ -81,6 +84,53 @@ async def test_create_queue_success(async_client):
 
 
 @pytest.mark.asyncio
+async def test_create_queue_with_retention_duration(async_client):
+    """Test create_queue passes retention_policy to the proto request."""
+    from chronoqueue.api.queueservice.v1 import request_response_pb2
+
+    async_client.stub = AsyncMock()
+    async_client.stub.CreateQueue = AsyncMock(return_value=MagicMock())
+
+    options = QueueOptions(
+        retention_policy=MessageRetentionPolicy(
+            mode=RetentionMode.RETAIN_DURATION, retention_seconds=86400
+        )
+    )
+    await async_client.create_queue("test_queue", options)
+
+    call_args = async_client.stub.CreateQueue.call_args[0][0]
+    assert call_args.metadata.message_retention_policy.mode == 1  # RETAIN_DURATION
+    assert call_args.metadata.message_retention_policy.retention_seconds == 86400
+
+
+@pytest.mark.asyncio
+async def test_create_queue_with_retention_forever(async_client):
+    """Test create_queue passes RETAIN_FOREVER mode to the proto request."""
+    async_client.stub = AsyncMock()
+    async_client.stub.CreateQueue = AsyncMock(return_value=MagicMock())
+
+    options = QueueOptions(retention_policy=MessageRetentionPolicy(mode=RetentionMode.RETAIN_FOREVER))
+    await async_client.create_queue("test_queue", options)
+
+    call_args = async_client.stub.CreateQueue.call_args[0][0]
+    assert call_args.metadata.message_retention_policy.mode == 2  # RETAIN_FOREVER
+
+
+@pytest.mark.asyncio
+async def test_create_queue_with_lease_policy(async_client):
+    """Test create_queue passes lease_policy to the proto request."""
+    async_client.stub = AsyncMock()
+    async_client.stub.CreateQueue = AsyncMock(return_value=MagicMock())
+
+    options = QueueOptions(lease_policy=LeasePolicyOptions(base_lease="30s", heartbeat_timeout="10s"))
+    await async_client.create_queue("test_queue", options)
+
+    call_args = async_client.stub.CreateQueue.call_args[0][0]
+    assert call_args.metadata.lease_policy.base_lease.seconds == 30
+    assert call_args.metadata.lease_policy.heartbeat_timeout.seconds == 10
+
+
+@pytest.mark.asyncio
 async def test_delete_queue_success(async_client):
     """Test delete_queue async method."""
     async_client.stub = AsyncMock()
@@ -135,9 +185,43 @@ async def test_renew_message_lease_success(async_client):
     mock_response = MagicMock()
     async_client.stub.RenewMessageLease = AsyncMock(return_value=mock_response)
 
-    response = await async_client.renew_message_lease("msg123", "10m")
+    response = await async_client.renew_message_lease("my_queue", "msg123", "10m")
     assert response is not None
     async_client.stub.RenewMessageLease.assert_called_once()
+    call_args = async_client.stub.RenewMessageLease.call_args[0][0]
+    assert call_args.queue_name == "my_queue"
+    assert call_args.message_id == "msg123"
+
+
+@pytest.mark.asyncio
+async def test_list_queues_success(async_client):
+    """Test list_queues async method."""
+    async_client.stub = AsyncMock()
+    mock_response = MagicMock()
+    async_client.stub.ListQueues = AsyncMock(return_value=mock_response)
+
+    response = await async_client.list_queues(prefix="order_")
+
+    assert response is not None
+    async_client.stub.ListQueues.assert_called_once()
+    call_args = async_client.stub.ListQueues.call_args[0][0]
+    assert call_args.prefix == "order_"
+
+
+@pytest.mark.asyncio
+async def test_preview_calendar_schedule_success(async_client):
+    """Test preview_calendar_schedule async method."""
+    async_client.stub = AsyncMock()
+    mock_response = MagicMock()
+    async_client.stub.PreviewCalendarSchedule = AsyncMock(return_value=mock_response)
+
+    calendar_config = {}
+    response = await async_client.preview_calendar_schedule(calendar_config, count=5)
+
+    assert response is not None
+    async_client.stub.PreviewCalendarSchedule.assert_called_once()
+    call_args = async_client.stub.PreviewCalendarSchedule.call_args[0][0]
+    assert call_args.count == 5
 
 
 @pytest.mark.asyncio
@@ -156,6 +240,26 @@ async def test_peek_queue_messages_success(async_client):
     response = await async_client.peek_queue_messages(params)
     assert response is not None
     async_client.stub.PeekQueueMessages.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_peek_queue_messages_with_priority_range(async_client):
+    """Test peek_queue_messages passes priority_range as proto type."""
+    from chronoqueue.utils import MessagePriorityRange
+
+    async_client.stub = AsyncMock()
+    async_client.stub.PeekQueueMessages = AsyncMock(return_value=MagicMock())
+
+    params = PeekQueueMessagesParams(
+        queue_name="test_queue",
+        limit=10,
+        priority_range=MessagePriorityRange(min=1, max=3),
+    )
+    await async_client.peek_queue_messages(params)
+
+    call_args = async_client.stub.PeekQueueMessages.call_args[0][0]
+    assert call_args.priority_range.min == 1
+    assert call_args.priority_range.max == 3
 
 
 @pytest.mark.asyncio
