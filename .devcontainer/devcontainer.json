@@ -1,81 +1,41 @@
 {
-    "name": "chronoq Python Dev Container",
-    "context": "..",
-    "dockerFile": "Dockerfile",
-    // Set *default* container specific settings.json values on container create.
-    "customizations": {
-        // Configure properties specific to VS Code.
-        "vscode": {
-            "settings": {
-                "files.exclude": {
-                    "**/__pycache__": true,
-                    "**/.pytest_cache": true
-                },
-                "python.analysis.ignore": [
-                    "**/tests/**"
-                ],
-                "terminal.integrated.shell.linux": "/bin/bash",
-                "editor.formatOnSave": true,
-                "files.eol": "\n",
-                "files.autoSave": "onFocusChange",
-                "git.autorefresh": true,
-                "extensions.ignoreRecommendations": true,
-                "terminal.integrated.profiles.linux": {
-                    "bash": {
-                        "path": "bash"
-                    },
-                    "zsh": {
-                        "path": "zsh"
-                    },
-                    "fish": {
-                        "path": "fish"
-                    },
-                    "tmux": {
-                        "path": "tmux",
-                        "icon": "terminal-tmux"
-                    },
-                    "pwsh": {
-                        "path": "pwsh",
-                        "icon": "terminal-powershell"
-                    }
-                },
-                "terminal.integrated.defaultProfile.linux": "bash",
-                "python.pythonPath": "/usr/local/bin/python",
-                "python.linting.enabled": true,
-                "python.linting.flake8Enabled": true,
-                "python.linting.mypyEnabled": true,
-                "isort.args": [
-                    "--profile",
-                    "black"
-                ],
-                "[python]": {
-                    "editor.defaultFormatter": "ms-python.black-formatter",
-                    "diffEditor.ignoreTrimWhitespace": false,
-                    "editor.formatOnSave": true,
-                    "editor.formatOnPaste": false,
-                    "editor.formatOnSaveMode": "file",
-                    "editor.codeActionsOnSave": {
-                        "source.organizeImports": true
-                    }
-                }
-            },
-            "extensions": [
-                "ms-python.black-formatter",
-                "ms-python.python",
-                "ms-python.isort",
-                "eamodio.gitlens",
-                "GitHub.copilot",
-                "GitHub.copilot-chat",
-                "humao.rest-client"
-            ]
-        }
-    },
-    "mounts": [
-        "type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock"
-    ],
-    "postCreateCommand": "sudo chmod 666 /var/run/docker.sock && /bin/bash .devcontainer/postCreateCommand.sh",
-    "workspaceFolder": "/workspace",
-    "workspaceMount": "type=bind,source=${localWorkspaceFolder},target=/workspace",
-    "postAttachCommand": "git config --global --add safe.directory ${containerWorkspaceFolder}",
-    "remoteUser": "vscode"
+  "name": "Nzovu Python SDK",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "type=bind,source=${localWorkspaceFolder},target=/workspace",
+  "remoteUser": "vscode",
+  "postCreateCommand": "bash .devcontainer/postCreateCommand.sh",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "files.exclude": {
+          "**/__pycache__": true,
+          "**/.pytest_cache": true
+        },
+        "[python]": {
+          "editor.defaultFormatter": "ms-python.black-formatter",
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+          }
+        },
+        "black-formatter.importStrategy": "fromEnvironment",
+        "isort.importStrategy": "fromEnvironment",
+        "isort.args": [
+          "--profile",
+          "black"
+        ]
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.black-formatter",
+        "ms-python.isort"
+      ]
+    }
+  }
 }

@@ -1,98 +1,42 @@
-You are an experienced developer working on the temporal project. Your task is to fix a bug or implement a new feature while adhering to the project's best practices and development guidelines. Your background is in distributed systems, database engines, and scalable platforms.
-Before starting the implementation of any request, you MUST REVIEW the following development guide and best practices.
+# Nzovu Python SDK development
 
-# Core Mandates
+Review these instructions and surrounding code before implementation. Follow established Python conventions; do not introduce dependencies or change public APIs outside the requested scope. Preserve user changes and handle errors explicitly. Add comments only when they explain why.
 
-- **Conventions:** Rigorously adhere to existing project conventions when reading or modifying code. Analyze surrounding code, tests, and configuration first.
-- **Libraries/Frameworks:** NEVER assume a library/framework is available or appropriate. Verify its established usage within the project (check imports, and 'go.mod') before employing it.
-- **Style & Structure:** Mimic the style (formatting, naming), structure, framework choices, typing, and architectural patterns of existing code in the project.
-- **Idiomatic Changes:** When editing, understand the local context (imports, functions/classes) to ensure your changes integrate naturally and idiomatically.
-- **Comments:** Add code comments sparingly. Focus on *why* something is done, especially for complex logic, rather than *what* is done. Only add high-value comments if necessary for clarity or if requested by the user. Do not edit comments that are separate from the code you are changing. *NEVER* talk to the user or describe your changes through comments.
-- **Proactiveness:** Fulfill the user's request thoroughly, including reasonable, directly implied follow-up actions.
-- **Confirm Ambiguity/Expansion:** Do not take significant actions beyond the clear scope of the request without confirming with the user. If asked *how* to do something, explain first, don't just do it.
-- **Explaining Changes:** After completing a code modification or file operation provide summaries.
-- **Do Not revert changes:** Do not revert changes to the codebase unless asked to do so by the user. Only revert changes made by you if they have resulted in an error or if the user has explicitly asked you to revert the changes.
+## Repository and migration
 
-# Tone and Style
+- This is an independent SDK repository with default branch `main`. Work on feature branches and use pull requests.
+- SDK-PR0 preserves the source SDK's `chronoqueue/` package and proto snapshot as a baseline. SDK-PR1 migrates package identity and generation; later PRs align client contracts.
+- Never commit, tag, push or publish without the user's authorization. Publishing remains disabled until SDK-PR5.
+- Keep the MIT license and source attribution. Do not copy untracked files from the source checkout without reviewing their inclusion.
 
-- **Concise & Direct:** Adopt a professional, direct, and concise tone suitable for a chat environment.
-- **Minimal Output:** Aim for fewer than 3 lines of text output (excluding tool use/code generation) per response whenever practical. Focus strictly on the user's query.
-- **Clarity over Brevity (When Needed):** While conciseness is key, prioritize clarity for essential explanations or when seeking necessary clarification if a request is ambiguous.
-- **No Chitchat:** Avoid conversational filler, preambles ("Okay, I will now..."), or postambles ("I have finished the changes..."). Get straight to the action or answer.
-- **Formatting:** Use GitHub-flavored Markdown. Responses will be rendered in monospace.
-- **Tools vs. Text:** Use tools for actions, text output *only* for communication. Do not add explanatory comments within tool calls or code blocks unless specifically part of the required code/command itself.
-- **Handling Inability:** If unable/unwilling to fulfill a request, state so briefly (1-2 sentences) without excessive justification. Offer alternatives if appropriate.
+## Structure
 
-# Development Guide
+- `chronoqueue/`: synchronous/asynchronous clients, request helpers and optional Pydantic models (renamed in SDK-PR1).
+- `chronoqueue/api/`: generated protobuf modules; do not edit manually.
+- `proto/`: vendored protocol definitions.
+- `tests/`: pytest tests; `examples/store-api/`: separate example project.
+- `pyproject.toml` and `poetry.lock`: SDK dependencies and reproducible development environment.
+- `.github/workflows/ci.yml`: validation only; inactive publishing workflows live outside the workflows directory.
 
-## Project Structure
+## Development commands
 
-- `/chronoqueue`: SDK implementation and utilities
-- `/chronoqueue/api`: proto definitions and generated code
-- `/chronoqueue/converters`: proto generated types to json types
-- `/chronoqueue/client`: client library for inter-service communication between python services and chronoqueue.
-- `/docs`: SDK documentation
-- `/proto`: proto definitions for chronoqueue service
-- `/tests`: SDK unit tests implementation
+Use Python 3.12 for the bootstrap baseline and Poetry 2.3.1. Run from the repository root:
 
-## Important Commands
+```bash
+make install-dev
+make test
+make lint
+make typecheck
+make format FORMAT_FLAGS=--check
+make build
+```
 
-- Linting: `make lint`
-- Formatting imports: `make format`
-- Code generation: `make gen-proto`
-- Unit Testing: `make test`
+`make install-dev` validates and installs the committed lockfile into `.venv`. Keep dependency updates explicit; do not replace locked installs with unpinned pip installs. `make format` without flags edits handwritten Python formatting. Use `make gen-proto` only when deliberately changing generation; review every generated diff.
 
-## Best Practices
+## Validation
 
-- Mimic the style (formatting, naming), structure, framework choices, typing, and architectural patterns of existing code in the project
-- Do not litter our codebase with unnecessary comments. Comments should describe WHY something was done, never WHAT was done
-- Implement tests for both best-case scenarios and failure modes
-- Handle errors appropriately
-  - errors MUST be handled, not ignored
-- Leave `CONSIDER(name):` comments for future design considerations
-- Regenerate code when interface definitions change
-- Always include `-tags test_dep` when running tests
-- Include the `integration` tag only for integration tests
-- Do not introduce new third party libraries unless specifically requested.
-
-## Error Handling
-
-- Check and handle all errors
-- Use appropriate logging methods based on error severity
-  - Use `logger.Fatal` for core invariant violations
-  - Use `logger.DPanic` for issues that are important but should not crash production
-
-## Testing
-
-- Write tests for new functionality
-- Run tests after altering code or tests
-- Start with unit tests for fastest feedback
-
-# Primary Workflows
-
-## Software Engineering Tasks
-
-When requested to perform tasks like fixing bugs, adding features, refactoring, or explaining code, follow this sequence:
-
-1. **Understand:** Think about the user's request and the relevant codebase context.
-2. **Plan:** Build a coherent and grounded (based on the understanding in step 1) plan for how you intend to resolve the user's task. Share an extremely concise yet clear plan with the user if it would help the user understand your thought process. As part of the plan, you should try to use a self-verification loop by writing unit tests if relevant to the task. Use output logs or debug statements as part of this self verification loop to arrive at a solution.
-3. **Implement:** Use the available tools to act on the plan, strictly adhering to the project's established conventions (detailed under 'Core Mandates').
-4. **Regenerate:** If necessary, regenerate code based on your changes. If you alter anything annotated with `//go:generate` or in a `.proto` file you will need to do this.
-5. **Verify (Tests):** If applicable and feasible, verify the changes using the project's testing procedures. Identify the correct test commands and frameworks by examining 'README' files, build/package configuration (e.g., 'Makefile'), or existing test execution patterns. NEVER assume standard test commands.
-6. **Verify (Standards):** VERY IMPORTANT: After making code changes, execute the project-specific build, linting and type-checking commands (`make lint`)
-
-## Planning
-
-When planning (under 'Software Engineering Tasks'):
-
-1. Break down the feature into smaller, manageable tasks.
-2. Consider potential challenges for each task and how to address them.
-3. Provide a high-level outline of the code structure, including function names and their purposes.
-4. List specific test cases you plan to implement.
-5. State which error handling approaches you will use for different scenarios.
-6. Discuss the trade-offs inherent in your design decisions, including:
-  a. Performance trade-offs
-  b. Scalability trade-offs
-  c. Complexity trade-offs
-  d. Security trade-offs
-7. Reason about the failure modes of your design. How does it handle crashes? A 10x increase in load?
+- Use pytest and the existing sync/async test patterns. Do not apply Go test flags or Go tooling here.
+- Test success and failure paths for changed behavior; preserve gRPC status details and optional-field presence.
+- Run relevant tests after changes, plus lint, typecheck, formatting checks and a package build.
+- Report inherited failures separately from regressions. Do not suppress failures or broaden exclusions to make CI green.
+- Test both optional-Pydantic and base installs when changing exports or models. Test installed artifacts outside the source checkout when changing packaging.
