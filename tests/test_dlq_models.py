@@ -10,6 +10,7 @@ from nzovu.api.queueservice.v1 import request_response_pb2
 # Test with Pydantic if available
 try:
     from nzovu.models import (
+        PYDANTIC_AVAILABLE,
         DeleteFromDLQResponse,
         GetDLQMessagesResponse,
         GetDLQStatsResponse,
@@ -17,8 +18,6 @@ try:
         PurgeDLQResponse,
         RequeueFromDLQResponse,
     )
-
-    PYDANTIC_AVAILABLE = True
 except ImportError:
     PYDANTIC_AVAILABLE = False
 

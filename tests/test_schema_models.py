@@ -10,6 +10,7 @@ from nzovu.api.schema.v1 import schema_pb2
 # SchemaInfo is in request_response_pb2
 # ValidationError is in schema_pb2
 from nzovu.models import (
+    PYDANTIC_AVAILABLE,
     DeleteSchemaResponse,
     GetSchemaResponse,
     ListSchemasResponse,
@@ -22,6 +23,7 @@ from nzovu.models import (
 from nzovu.utils import ResponseWrapper
 
 
+@unittest.skipUnless(PYDANTIC_AVAILABLE, "Pydantic not installed")
 class TestSchemaModels(unittest.TestCase):
     """Test suite for schema Pydantic models."""
 

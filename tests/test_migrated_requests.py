@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, Mock
 import grpc
 import pytest
 
-from nzovu import AsyncNzovuClient, NzovuClient
+from nzovu import AsyncNzovuClient, NzovuClient, models
 from nzovu.api.message.v1.message_pb2 import Message
 from nzovu.api.queueservice.v1 import request_response_pb2
 from nzovu.api.schedule.v1 import schedule_pb2
@@ -54,7 +54,11 @@ async def test_pagination_preserves_filters_and_response_tokens(
     stub_method.assert_called_once()
     assert result.to_proto() == response
     assert result.to_dict().get("nextPageToken", "") == next_token
-    assert result.to_model().next_page_token == next_token
+    if models.PYDANTIC_AVAILABLE:
+        assert result.to_model().next_page_token == next_token
+    else:
+        with pytest.raises(ImportError):
+            result.to_model()
 
 
 class FailedRpc(grpc.RpcError):
@@ -110,6 +114,8 @@ async def test_schedule_state_and_model_use_current_descriptor(asynchronous):
         await result
     request = client.stub.CreateSchedule.call_args.args[0]
     assert request.schedule.metadata.state == schedule_pb2.Schedule.Metadata.PAUSED
+    if not models.PYDANTIC_AVAILABLE:
+        return
     from nzovu.models import Schedule
 
     model = Schedule.from_proto(request.schedule)

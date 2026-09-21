@@ -39,7 +39,6 @@ from typing import Callable, Dict, Optional
 import grpc
 from google.protobuf import json_format
 
-from .api.common.v1 import common_pb2
 from .api.message.v1.message_pb2 import Message
 from .api.queue.v1 import queue_pb2
 from .api.queueservice.v1 import request_response_pb2, service_pb2_grpc
@@ -57,9 +56,15 @@ from .utils import (
     TlsConfig,
     TransactionMode,
     _create_post_message_request,
+    build_bulk_request,
     build_lease_policy,
-    dict_to_protobuf_struct,
+    build_schedule_request,
+    page_call_arguments,
+    require_name,
     string_to_duration,
+    validate_integer,
+    validate_page,
+    validate_page_iterator,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -324,6 +329,7 @@ class AsyncNzovuClient:
         RpcOperationError
             If the gRPC operation fails and no custom error handler is provided.
         """
+        validate_page(page_size, page_token)
         try:
             request = request_response_pb2.ListQueuesRequest(prefix=prefix, page_size=page_size, page_token=page_token)
             response = await self.stub.ListQueues(request)
@@ -348,6 +354,10 @@ class AsyncNzovuClient:
         lease_duration: str,
         exclusivity_key: str = "",
         enable_heartbeat: bool = False,
+        error_handler=None,
+        *,
+        worker_id: Optional[str] = None,
+        attempt_id: Optional[str] = None,
     ) -> ResponseWrapper:
         """
         Retrieve the next message from a queue asynchronously.
@@ -373,64 +383,69 @@ class AsyncNzovuClient:
         >>> response = await client.get_next_message("my_queue", "5m", enable_heartbeat=True)
         >>> msg = response.to_model()
         """
-        pb_release_duration = string_to_duration(lease_duration)
+        try:
+            pb_release_duration = string_to_duration(lease_duration)
 
-        request = request_response_pb2.GetNextMessageRequest(
-            queue_name=queue_name,
-            lease_duration=pb_release_duration,
-            exclusivity_key=exclusivity_key,
-            worker_id=self._worker_id,
-        )
-        response = await self.stub.GetNextMessage(request)
-        response_wrapper = ResponseWrapper(response_protobuf=response)
+            request = request_response_pb2.GetNextMessageRequest(
+                queue_name=queue_name,
+                lease_duration=pb_release_duration,
+                exclusivity_key=exclusivity_key,
+                worker_id=self._worker_id if worker_id is None else worker_id,
+                attempt_id=attempt_id,
+            )
+            response = await self.stub.GetNextMessage(request)
+            response_wrapper = ResponseWrapper(response_protobuf=response)
 
-        if enable_heartbeat:
-            resp_dict = response_wrapper.to_dict()
-            message_id = resp_dict.get("messageId") or resp_dict.get("message", {}).get("messageId")
+            if enable_heartbeat:
+                resp_dict = response_wrapper.to_dict()
+                message_id = resp_dict.get("messageId") or resp_dict.get("message", {}).get("messageId")
 
-            if message_id:
-                logging.info(f"Starting async heartbeat for message {message_id} on queue {queue_name}")
+                if message_id:
+                    logging.info(f"Starting async heartbeat for message {message_id} on queue {queue_name}")
 
-                # Extract attempt_id and worker_id for heartbeat tracking
-                attempt_id = resp_dict.get("attemptId", "") or resp_dict.get("attempt_id", "")
-                worker_id = resp_dict.get("workerId", "") or resp_dict.get("worker_id", "")
+                    # Extract attempt_id and worker_id for heartbeat tracking
+                    attempt_id = resp_dict.get("attemptId", "") or resp_dict.get("attempt_id", "")
+                    worker_id = resp_dict.get("workerId", "") or resp_dict.get("worker_id", "")
 
-                heartbeat_frequency = resp_dict.get("heartbeat_frequency", 1)
-                max_reconnect_attempts = resp_dict.get("max_reconnect_attempts", 3)
+                    heartbeat_frequency = resp_dict.get("heartbeat_frequency", 1)
+                    max_reconnect_attempts = resp_dict.get("max_reconnect_attempts", 3)
 
-                async with self._lock:
-                    if message_id in self._heartbeat_tasks:
-                        logging.warning(f"Heartbeat already active for message {message_id}, skipping")
-                    else:
-                        stop_event = asyncio.Event()
-                        self._heartbeat_stop_events[message_id] = stop_event
+                    async with self._lock:
+                        if message_id in self._heartbeat_tasks:
+                            logging.warning(f"Heartbeat already active for message {message_id}, skipping")
+                        else:
+                            stop_event = asyncio.Event()
+                            self._heartbeat_stop_events[message_id] = stop_event
 
-                        task = asyncio.create_task(
-                            self._heartbeat_loop(
-                                message_id=message_id,
-                                queue_name=queue_name,
-                                attempt_id=attempt_id,
-                                worker_id=worker_id,
-                                stop_event=stop_event,
-                                heartbeat_frequency=heartbeat_frequency,
-                                max_reconnect_attempts=max_reconnect_attempts,
+                            task = asyncio.create_task(
+                                self._heartbeat_loop(
+                                    message_id=message_id,
+                                    queue_name=queue_name,
+                                    attempt_id=attempt_id,
+                                    worker_id=worker_id,
+                                    stop_event=stop_event,
+                                    heartbeat_frequency=heartbeat_frequency,
+                                    max_reconnect_attempts=max_reconnect_attempts,
+                                )
                             )
-                        )
 
-                        self._heartbeat_tasks[message_id] = task
-                        self._heartbeat_metrics[message_id] = {
-                            "message_id": message_id,
-                            "queue_name": queue_name,
-                            "started_at": time.time(),
-                            "heartbeats_sent": 0,
-                            "heartbeats_failed": 0,
-                            "last_heartbeat_at": None,
-                            "last_error": None,
-                        }
-            else:
-                logging.debug(f"No message returned from queue {queue_name}, heartbeat not started")
+                            self._heartbeat_tasks[message_id] = task
+                            self._heartbeat_metrics[message_id] = {
+                                "message_id": message_id,
+                                "queue_name": queue_name,
+                                "started_at": time.time(),
+                                "heartbeats_sent": 0,
+                                "heartbeats_failed": 0,
+                                "last_heartbeat_at": None,
+                                "last_error": None,
+                            }
+                else:
+                    logging.debug(f"No message returned from queue {queue_name}, heartbeat not started")
 
-        return response_wrapper
+            return response_wrapper
+        except grpc.RpcError as e:
+            error = RpcOperationError(f"RPC failed: {e.details()}")
+            self._handle_error(error, handler=error_handler)
 
     async def _heartbeat_loop(
         self,
@@ -571,7 +586,7 @@ class AsyncNzovuClient:
                 f"Total heartbeats: {heartbeat_count}, Duration: {time.time() - start_time:.1f}s"
             )
 
-    async def acknowledge_message(self, params: AcknowledgeMessageParams) -> ResponseWrapper:
+    async def acknowledge_message(self, params: AcknowledgeMessageParams, error_handler=None) -> ResponseWrapper:
         """
         Acknowledge a message asynchronously.
 
@@ -591,22 +606,26 @@ class AsyncNzovuClient:
         --------
         >>> await client.acknowledge_message(params)
         """
-        message_id = params.message_id
+        try:
+            message_id = params.message_id
 
-        # Stop heartbeat if active
-        if message_id in self._heartbeat_stop_events:
-            logging.info(f"Stopping heartbeat for acknowledged message {message_id}")
-            self._heartbeat_stop_events[message_id].set()
+            # Stop heartbeat if active
+            if message_id in self._heartbeat_stop_events:
+                logging.info(f"Stopping heartbeat for acknowledged message {message_id}")
+                self._heartbeat_stop_events[message_id].set()
 
-        request = request_response_pb2.AcknowledgeMessageRequest(
-            message_id=params.message_id,
-            queue_name=params.queue_name,
-            state=params.state.name if isinstance(params.state, MessageState) else params.state,
-            worker_id=params.worker_id,
-            attempt_id=params.attempt_id,
-        )
-        response = await self.stub.AcknowledgeMessage(request)
-        return ResponseWrapper(response_protobuf=response)
+            request = request_response_pb2.AcknowledgeMessageRequest(
+                message_id=params.message_id,
+                queue_name=params.queue_name,
+                state=params.state.name if isinstance(params.state, MessageState) else params.state,
+                worker_id=params.worker_id,
+                attempt_id=params.attempt_id,
+            )
+            response = await self.stub.AcknowledgeMessage(request)
+            return ResponseWrapper(response_protobuf=response)
+        except grpc.RpcError as e:
+            error = RpcOperationError(f"RPC failed: {e.details()}")
+            self._handle_error(error, handler=error_handler)
 
     async def cancel_message(
         self, queue_name: str, message_id: str, reason: str = "", error_handler=None
@@ -746,30 +765,7 @@ class AsyncNzovuClient:
         """
         try:
             # Build the bulk request
-            request = request_response_pb2.PostMessagesBulkRequest()
-            request.queue_name = queue_name
-
-            # Convert transaction mode to protobuf enum
-            # Handle both TransactionMode enum and string for backwards compatibility
-            mode_value = transaction_mode.value if isinstance(transaction_mode, TransactionMode) else transaction_mode
-
-            if mode_value == "ALL_OR_NOTHING":
-                request.transaction_mode = request_response_pb2.PostMessagesBulkRequest.ALL_OR_NOTHING
-            elif mode_value == "BEST_EFFORT":
-                request.transaction_mode = request_response_pb2.PostMessagesBulkRequest.BEST_EFFORT
-            else:
-                raise ValueError(
-                    f"Invalid transaction_mode: {transaction_mode}. Must be TransactionMode.ALL_OR_NOTHING or TransactionMode.BEST_EFFORT"
-                )
-
-            # Add each message to the request
-            for idx, msg_params in enumerate(messages):
-                if msg_params.queue_name and msg_params.queue_name != queue_name:
-                    raise ValueError(f"messages[{idx}].queue_name must match queue_name='{queue_name}'")
-                msg_request = _create_post_message_request(params=msg_params)
-                request.messages.append(msg_request.message)
-
-            # Execute the bulk post
+            request = build_bulk_request(queue_name, messages, transaction_mode)
             response = await self.stub.PostMessagesBulk(request)
             return ResponseWrapper(response_protobuf=response)
 
@@ -781,6 +777,29 @@ class AsyncNzovuClient:
             logging.error(f"Invalid parameters for bulk post: {e}")
             error = RpcOperationError(f"Invalid parameters for bulk post: {e}")
             self._handle_error(error, handler=error_handler)
+
+    async def iter_pages(self, method: str, *args, max_pages=None, **kwargs):
+        """Yield one response per request; stop on exhaustion or max_pages."""
+        validate_page_iterator(method, max_pages)
+        params = (args[0] if args else kwargs.get("params")) if method == "peek_queue_messages" else None
+        token = params.page_token if params is not None else kwargs.get("page_token", "")
+        seen = {token}
+        count = 0
+        while max_pages is None or count < max_pages:
+            call_args, call_kwargs = page_call_arguments(method, args, kwargs, token)
+            response = await getattr(self, method)(*call_args, **call_kwargs)
+            if response is None:
+                return
+            yield response
+            count += 1
+            if max_pages is not None and count >= max_pages:
+                return
+            token = response.to_proto().next_page_token
+            if not token:
+                return
+            if token in seen:
+                raise ValueError("Server repeated a pagination token")
+            seen.add(token)
 
     def get_active_heartbeat_count(self) -> int:
         """Get the number of messages with currently active heartbeats."""
@@ -795,7 +814,14 @@ class AsyncNzovuClient:
         return list(self._heartbeat_tasks.keys())
 
     async def renew_message_lease(
-        self, queue_name: str, message_id: str, new_lease_duration: str, error_handler=None
+        self,
+        queue_name: str,
+        message_id: str,
+        new_lease_duration: str,
+        error_handler=None,
+        *,
+        worker_id: Optional[str] = None,
+        attempt_id: Optional[str] = None,
     ) -> ResponseWrapper:
         """
         Renew the lease duration for a message.
@@ -825,7 +851,11 @@ class AsyncNzovuClient:
         """
         try:
             request = request_response_pb2.RenewMessageLeaseRequest(
-                queue_name=queue_name, message_id=message_id, lease_duration=string_to_duration(new_lease_duration)
+                queue_name=queue_name,
+                message_id=message_id,
+                lease_duration=string_to_duration(new_lease_duration),
+                worker_id=worker_id,
+                attempt_id=attempt_id,
             )
             response = await self.stub.RenewMessageLease(request)
             return ResponseWrapper(response_protobuf=response)
@@ -858,12 +888,14 @@ class AsyncNzovuClient:
         Example:
         --------
         >>> from nzovu.utils import PeekQueueMessagesParams
-        >>> params = PeekQueueMessagesParams(queue_name="my_queue", max_messages=10)
+        >>> params = PeekQueueMessagesParams(queue_name="my_queue", page_size=10)
         >>> response = await client.peek_queue_messages(params)
         """
+        validate_page(params.page_size, params.page_token)
         try:
             priority_range = None
             if params.priority_range is not None:
+                params.priority_range.__post_init__()
                 priority_range = request_response_pb2.PeekQueueMessagesRequest.PriorityRange(
                     min=params.priority_range.min, max=params.priority_range.max
                 )
@@ -937,7 +969,7 @@ class AsyncNzovuClient:
         Returns:
         -------
         ResponseWrapper
-            Wrapper containing the SendMessageHeartbeatResponse.
+            Wrapper containing the SendMessageHeartBeatResponse.
 
         Raises:
         ------
@@ -955,7 +987,7 @@ class AsyncNzovuClient:
                 attempt_id=attempt_id,
                 worker_id=worker_id,
             )
-            response = await self.stub.SendMessageHeartbeat(request)
+            response = await self.stub.SendMessageHeartBeat(request)
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error sending message heartbeat: {e.details()}")
@@ -992,39 +1024,7 @@ class AsyncNzovuClient:
         >>> await client.create_schedule("my_schedule", options)
         """
         try:
-            payload_struct = dict_to_protobuf_struct(options.payload)
-            payload = common_pb2.Payload(data=payload_struct)
-
-            # Build metadata
-            metadata = schedule_pb2.Schedule.Metadata(
-                payload=payload,
-                state=options.state.name,
-                queue_name=options.queue_name,
-            )
-
-            # Set schedule config (cron or calendar)
-            if options.cron_schedule:
-                metadata.cron_schedule = options.cron_schedule
-            elif options.calendar_schedule:
-                calendar_schedule = json_format.ParseDict(options.calendar_schedule, schedule_pb2.CalendarSchedule())
-                metadata.calendar_schedule.CopyFrom(calendar_schedule)
-
-            # Set optional fields
-            if options.priority is not None:
-                metadata.priority = options.priority
-            if options.max_messages is not None:
-                metadata.has_max_messages = True
-                metadata.max_messages = options.max_messages
-            if options.lease_duration:
-                metadata.lease_duration.CopyFrom(string_to_duration(options.lease_duration))
-            if options.timezone:
-                metadata.timezone = options.timezone
-
-            # Build schedule
-            schedule = schedule_pb2.Schedule(schedule_id=schedule_id, metadata=metadata)
-
-            # Build request and call service
-            request = request_response_pb2.CreateScheduleRequest(schedule=schedule)
+            request = build_schedule_request(schedule_id, options)
             response = await self.stub.CreateSchedule(request)
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
@@ -1132,6 +1132,7 @@ class AsyncNzovuClient:
         --------
         >>> response = await client.list_schedules(prefix="daily_")
         """
+        validate_page(page_size, page_token)
         try:
             request = request_response_pb2.ListSchedulesRequest(
                 prefix=prefix, page_size=page_size, page_token=page_token
@@ -1175,6 +1176,7 @@ class AsyncNzovuClient:
         --------
         >>> response = await client.get_schedule_history("my_schedule", page_size=20)
         """
+        validate_page(page_size, page_token)
         try:
             request = request_response_pb2.GetScheduleHistoryRequest(
                 schedule_id=schedule_id, page_size=page_size, page_token=page_token
@@ -1315,6 +1317,7 @@ class AsyncNzovuClient:
         RpcOperationError
             If preview request fails and no custom error handler is provided.
         """
+        validate_integer(count, "count", 0, 100)
         try:
             calendar_schedule_pb = json_format.ParseDict(calendar_schedule, schedule_pb2.CalendarSchedule())
             request = request_response_pb2.PreviewCalendarScheduleRequest(
@@ -1356,6 +1359,8 @@ class AsyncNzovuClient:
         >>> options = SchemaOptions(name="Order Schema", content='{"type": "object"}')
         >>> response = await client.register_schema("order_schema", options)
         """
+        if options.content_type not in {"", "json-schema"}:
+            raise ValueError("Schema content_type must be json-schema")
         try:
             request = request_response_pb2.RegisterSchemaRequest(
                 schema_id=schema_id,
@@ -1400,6 +1405,7 @@ class AsyncNzovuClient:
         >>> response = await client.get_schema("order_schema")
         >>> schema = response.to_model()
         """
+        validate_integer(version, "version", 0, 2**31 - 1)
         try:
             request = request_response_pb2.GetSchemaRequest(schema_id=schema_id, version=version)
             response = await self.stub.GetSchema(request)
@@ -1449,6 +1455,7 @@ class AsyncNzovuClient:
         --------
         >>> response = await client.list_schemas(prefix="order_", page_size=50)
         """
+        validate_page(page_size, page_token)
         try:
             request = request_response_pb2.ListSchemasRequest(
                 prefix=prefix, page_size=page_size, page_token=page_token, active_only=active_only
@@ -1487,6 +1494,7 @@ class AsyncNzovuClient:
         --------
         >>> await client.delete_schema("order_schema", version=1)
         """
+        validate_integer(version, "version", 0, 2**31 - 1)
         try:
             request = request_response_pb2.DeleteSchemaRequest(schema_id=schema_id, version=version)
             response = await self.stub.DeleteSchema(request)
@@ -1531,6 +1539,7 @@ class AsyncNzovuClient:
         >>> if result.valid:
         ...     print("Payload is valid")
         """
+        validate_integer(version, "version", 0, 2**31 - 1)
         try:
             request = request_response_pb2.ValidatePayloadRequest(schema_id=schema_id, payload=payload, version=version)
             response = await self.stub.ValidatePayload(request)
@@ -1573,6 +1582,7 @@ class AsyncNzovuClient:
         >>> response = await client.get_dlq_messages("orders_queue_dlq", page_size=50)
         >>> messages = response.to_model()
         """
+        validate_page(page_size, page_token)
         try:
             request = request_response_pb2.GetDLQMessagesRequest(
                 dlq_name=dlq_name, page_size=page_size, page_token=page_token
@@ -1585,10 +1595,10 @@ class AsyncNzovuClient:
             self._handle_error(error, handler=error_handler)
 
     async def requeue_from_dlq(
-        self, dlq_name: str, message_id: str, target_queue: str = "", error_handler=None
+        self, dlq_name: str, message_id: str, target_queue: str, error_handler=None
     ) -> ResponseWrapper:
         """
-        Move a message from DLQ back to its original queue or a specified target queue.
+        Move a message from DLQ to an explicit existing target queue.
 
         Parameters:
         ----------
@@ -1596,7 +1606,7 @@ class AsyncNzovuClient:
             Name of the Dead Letter Queue.
         message_id : str
             Unique identifier of the message to requeue.
-        target_queue : str, optional
+        target_queue : str
             Target queue name. If empty, requeues to the original queue.
         error_handler : callable, optional
             Custom error handling function.
@@ -1615,6 +1625,7 @@ class AsyncNzovuClient:
         --------
         >>> await client.requeue_from_dlq("orders_queue_dlq", "msg-123", "orders_queue")
         """
+        require_name(target_queue, "target_queue")
         try:
             request = request_response_pb2.RequeueFromDLQRequest(
                 dlq_name=dlq_name, message_id=message_id, target_queue=target_queue

@@ -1,4 +1,4 @@
-.PHONY: help install install-dev lock update update-proto gen-proto check-proto check-artifacts clean clean-all test test-coverage lint typecheck format build publish publish-test ci all
+.PHONY: help install install-dev lock update update-proto gen-proto check-proto check-artifacts check-base-tests clean clean-all test test-coverage lint typecheck format build publish publish-test ci all
 
 POETRY ?= poetry
 PYTHON ?= $(POETRY) run python
@@ -60,6 +60,9 @@ build: clean
 
 check-artifacts:
 	$(PYTHON) scripts/check_artifacts.py --version "$$($(POETRY) version -s)"
+
+check-base-tests:
+	$(PYTHON) scripts/check_base_tests.py --version "$$($(POETRY) version -s)"
 
 publish publish-test:
 	@echo "Publishing disabled during the SDK migration." >&2

@@ -1,8 +1,9 @@
 # SDK migration status
 
-SDK-PR0 bootstrap and SDK-PR1 identity/protocol migration are complete.
+SDK-PR0 bootstrap, SDK-PR1 identity/protocol migration and SDK-PR2 API/model
+contracts are complete.
 Local unit, type, style, generation and installed-artifact gates pass.
-The SDK still requires the broader SDK-PR2/PR3 contract work and live release
+The SDK still requires SDK-PR3 authentication/worker lifecycle work and live release
 validation before publication.
 
 ## Repository and review state
@@ -71,9 +72,41 @@ public acknowledgment enums/claim fields, schedule state/model conversion,
 removed schedule-option rejection and source-manifest drift. No failure
 suppressions or expected-failure markers were added.
 
-SDK-PR2 must still audit pagination against the live server, headers, optional fields,
-execution history, response conversion and priority contracts. Authentication
-and claim/heartbeat ownership follow in SDK-PR3. Full compatibility and release
-validation remain required before the first server release.
+## SDK-PR2 completion
 
-Local completion log: `/private/tmp/nzovu-sdk-pr1-complete-validation.log`.
+Branch: `migration/sdk-pr2-api-contracts`, based on SDK-PR1 `dce1417`.
+All 31 wrappers have matching sync/async parameters, encoded-request assertions,
+error/handler checks and response models. Populated-response tests verify every
+nested protocol field; see [API contracts](API_CONTRACTS.md) for the public API.
+
+Implemented binary headers and payload/schema metadata, nanosecond durations and
+scheduled times, optional lease renewal limits, complete bulk/cancellation results,
+claim fields, schedule executions/calendar results and lazy page iteration.
+Corrected the async manual heartbeat RPC spelling. DLQ requeue now requires its
+target; schema/page/priority/header/ID validation matches the inspected server.
+Unset message lease durations inherit server defaults. Deprecated schedule-level
+timezone input is removed in favor of calendar configuration.
+
+Validation on Linux ARM64/Python 3.12.14:
+
+| Check | Result |
+| --- | --- |
+| Full unit suite with Pydantic | 423 passed, 1 skipped (base-only case) |
+| Installed wheel without Pydantic | 345 passed, 79 typed-only tests skipped |
+| Typecheck | Passed, 11 handwritten source files under inherited configuration |
+| Flake8 / Black / isort / generation drift | Passed |
+| Wheel/sdist build and isolated base/extra installs | Passed |
+| Workflow syntax and diff whitespace | Passed |
+
+No error suppressions were added. Two inherited model-test modules incorrectly
+inferred Pydantic availability from importing SDK fallback classes; they now test
+the actual availability flag. All RPCs still run in the base-install suite and
+verify that typed conversion reports the missing extra.
+
+The inherited schema-field shadowing warning remains. Hosted CI, the other
+advertised Python versions and live server scenarios have not been run here.
+SDK-PR3 ownership/lifecycle and authentication, then SDK-PR4 live compatibility,
+remain release gates. SDK-PR2 introduced the request/response ownership fields;
+it does not yet fix automatic heartbeat claim isolation or failed-ACK cleanup.
+
+Local completion log: `/private/tmp/nzovu-sdk2-final-validation.log`.

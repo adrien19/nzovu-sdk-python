@@ -44,18 +44,10 @@ class TestDLQOperations(unittest.TestCase):
         self.assertEqual(call_args.page_size, 50)
         self.assertIsNotNone(result)
 
-    def test_requeue_from_dlq_to_original(self):
-        """Test requeuing message to original queue."""
-        mock_response = request_response_pb2.RequeueFromDLQResponse(success=True)
-        self.mock_stub.RequeueFromDLQ.return_value = mock_response
-
-        self.client.requeue_from_dlq("orders_queue_dlq", "msg-123")
-
-        self.mock_stub.RequeueFromDLQ.assert_called_once()
-        call_args = self.mock_stub.RequeueFromDLQ.call_args[0][0]
-        self.assertEqual(call_args.dlq_name, "orders_queue_dlq")
-        self.assertEqual(call_args.message_id, "msg-123")
-        self.assertEqual(call_args.target_queue, "")
+    def test_requeue_from_dlq_requires_target(self):
+        with self.assertRaises(TypeError):
+            self.client.requeue_from_dlq("orders_queue_dlq", "msg-123")
+        self.mock_stub.RequeueFromDLQ.assert_not_called()
 
     def test_requeue_from_dlq_to_target_queue(self):
         """Test requeuing message to specific target queue."""

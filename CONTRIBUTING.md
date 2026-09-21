@@ -17,6 +17,7 @@ make typecheck
 make format FORMAT_FLAGS=--check
 make build
 make check-artifacts
+make check-base-tests
 ```
 
 Commands run in the project `.venv` through Poetry. `make install` selects only
