@@ -2,9 +2,16 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  POETRY_KEYRING_ENABLED: "false"
 
 jobs:
   lint:
@@ -21,7 +28,7 @@ jobs:
       - name: Install Poetry
         uses: snok/install-poetry@v1
         with:
-          version: latest
+          version: 2.3.1
           virtualenvs-create: true
           virtualenvs-in-project: true
       
@@ -34,9 +41,6 @@ jobs:
       
       - name: Install dependencies
         run: make install-dev
-      
-      - name: Generate proto files
-        run: make gen-proto
       
       - name: Run linting
         run: make lint
@@ -60,7 +64,7 @@ jobs:
       - name: Install Poetry
         uses: snok/install-poetry@v1
         with:
-          version: latest
+          version: 2.3.1
           virtualenvs-create: true
           virtualenvs-in-project: true
       
@@ -73,9 +77,6 @@ jobs:
       
       - name: Install dependencies
         run: make install-dev
-      
-      - name: Generate proto files
-        run: make gen-proto
       
       - name: Run tests with coverage
         run: make test-coverage
@@ -101,7 +102,7 @@ jobs:
       - name: Install Poetry
         uses: snok/install-poetry@v1
         with:
-          version: latest
+          version: 2.3.1
           virtualenvs-create: true
           virtualenvs-in-project: true
       
@@ -114,9 +115,6 @@ jobs:
       
       - name: Install dependencies
         run: make install-dev
-      
-      - name: Generate proto files
-        run: make gen-proto
       
       - name: Run type checking
         run: make typecheck
@@ -136,15 +134,12 @@ jobs:
       - name: Install Poetry
         uses: snok/install-poetry@v1
         with:
-          version: latest
+          version: 2.3.1
           virtualenvs-create: true
           virtualenvs-in-project: true
       
       - name: Install dependencies
         run: make install-dev
-      
-      - name: Generate proto files
-        run: make gen-proto
       
       - name: Build package
         run: make build

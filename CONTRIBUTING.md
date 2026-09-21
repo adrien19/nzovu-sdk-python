@@ -1,32 +1,36 @@
-# Contributing to Chronoqueue Python SDK
+# Contributing to the Nzovu Python SDK
 
-Thank you for your interest in contributing to the Chronoqueue Python SDK! This document provides guidelines and instructions for contributing.
+## Development setup
 
-## Development Setup
+This independent repository is being migrated. SDK-PR0 keeps the existing
+`chronoqueue` package/API intact; package renaming follows in SDK-PR1.
+See [the bootstrap baseline](docs/MIGRATION_BASELINE.md) for validation status.
 
-### Prerequisites
+Use Python 3.12 and Poetry 2.3.1 for the bootstrap baseline. Python 3.10–3.14
+remain the inherited CI matrix; broader compatibility is validated during migration.
 
-- Python 3.10 or higher
-- Poetry for dependency management
-- Git
+```bash
+cd SDKs/nzovu-sdk-python
+make install-dev
+make test
+make lint
+make typecheck
+make format FORMAT_FLAGS=--check
+make build
+```
 
-### Setting Up Your Development Environment
+The locked install creates `.venv` and includes development tools and optional
+Pydantic models. `make install` installs only the base runtime dependencies.
+Run tools through `poetry run` or the Makefile to use this environment.
 
-1. Fork and clone the repository:
-   ```bash
-   git clone https://github.com/your-username/chronoqueue-pythonsdk.git
-   cd chronoqueue-pythonsdk
-   ```
+Alternatively, open this repository folder in VS Code and select **Reopen in
+Container**. The container pins Python and Poetry; post-create installs the
+committed lockfile. Bootstrap does not require Docker socket access or launch
+Redis or other services. Live Nzovu integration setup follows in SDK-PR4.
 
-2. Install dependencies:
-   ```bash
-   make install-dev
-   ```
-
-3. Generate proto files:
-   ```bash
-   make gen-proto
-   ```
+Work from `main` on a feature branch. Commit and push only after explicit user
+approval. Publishing workflows and local publish targets are disabled until the
+new package release flow is reviewed in SDK-PR5.
 
 ## Development Workflow
 

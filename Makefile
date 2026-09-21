@@ -3,7 +3,10 @@
 # Configuration
 PROTO_PATH := ./proto
 OUTPUT_PATH := ./chronoqueue/api
-PYTHON := python3
+POETRY ?= poetry
+PYTHON ?= $(POETRY) run python
+FORMAT_FLAGS ?=
+export POETRY_VIRTUALENVS_IN_PROJECT := true
 CHRONOQUEUE_REPO ?= adrien19/chronoqueue
 CHRONOQUEUE_BRANCH ?= develop
 CHRONOQUEUE_PROTO_PATH ?= proto
@@ -34,23 +37,25 @@ help:
 # Install production dependencies
 install:
 	@echo "Installing production dependencies..."
-	$(PYTHON) -m pip install --user grpcio protobuf pydantic
+	$(POETRY) check --lock
+	$(POETRY) sync --only main
 
 # Install development dependencies
 install-dev:
 	@echo "Installing development dependencies..."
-	$(PYTHON) -m pip install --user grpcio protobuf pydantic grpcio-tools mypy-protobuf pytest pytest-cov pytest-asyncio black isort flake8 mypy
+	$(POETRY) check --lock
+	$(POETRY) sync --with dev --all-extras
 
 # Lock dependencies
 lock:
 	@echo "Locking dependencies..."
-	poetry lock
+	$(POETRY) lock
 	@echo "Dependencies locked successfully!"
 
 # Update dependencies to latest versions
 update:
 	@echo "Updating dependencies..."
-	poetry update
+	$(POETRY) update
 	@echo "Dependencies updated successfully!"
 	@echo "Remember to test with 'make ci' before committing!"
 
@@ -164,23 +169,23 @@ test:
 # Run tests with coverage
 test-coverage:
 	@echo "Running unit tests with coverage..."
-	$(PYTHON) -m pytest tests/ -v --cov=chronoqueue --cov-report=term-missing --cov-report=html
+	$(PYTHON) -m pytest tests/ -v --cov=chronoqueue --cov-report=term-missing --cov-report=html --cov-report=xml
 
 # Run linting checks
 lint:
 	@echo "Running linting checks..."
 	@echo "Checking with flake8..."
-	@$(PYTHON) -m flake8 chronoqueue/ tests/ --max-line-length=120 --count --statistics || true
+	@$(PYTHON) -m flake8 chronoqueue/ tests/ --max-line-length=120 --count --statistics
 	@echo "Checking with mypy..."
-	@$(PYTHON) -m mypy chronoqueue/ || true
+	@$(PYTHON) -m mypy chronoqueue/
 
 # Format code
 format:
 	@echo "Formatting code with black..."
-	@$(PYTHON) -m black chronoqueue/ tests/ --line-length=120 \
+	@$(PYTHON) -m black $(FORMAT_FLAGS) chronoqueue/ tests/ --line-length=120 \
 		--exclude='/(common|google|message|queue|queueservice|schedule|schema)/'
 	@echo "Sorting imports with isort..."
-	@$(PYTHON) -m isort chronoqueue/ tests/ \
+	@$(PYTHON) -m isort $(FORMAT_FLAGS) chronoqueue/ tests/ \
 		--skip chronoqueue/api/common \
 		--skip chronoqueue/api/google \
 		--skip chronoqueue/api/message \
@@ -193,25 +198,20 @@ format:
 # Type checking
 typecheck:
 	@echo "Running type checking with mypy..."
-	@$(PYTHON) -m mypy chronoqueue/ || true
+	@$(PYTHON) -m mypy chronoqueue/
 
 # Build package
 build: clean
 	@echo "Building package..."
-	poetry build
+	$(POETRY) build
 
-# Publish to PyPI (use with caution)
-publish: build
-	@echo "Publishing to PyPI..."
-	poetry publish
-
-# Publish to Test PyPI
-publish-test: build
-	@echo "Publishing to Test PyPI..."
-	poetry publish -r testpypi
+# Publishing is reintroduced for the new package in SDK-PR5.
+publish publish-test:
+	@echo "Publishing disabled during the SDK migration." >&2
+	@exit 1
 
 # Run all CI checks
-ci: lint test
+ci: lint typecheck test
 	@echo "All CI checks passed!"
 
 # Setup everything
