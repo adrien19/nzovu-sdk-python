@@ -1,7 +1,7 @@
 from uuid import uuid4
 import logging
-from chronoqueue.client import ChronoqueueClient
-from chronoqueue.utils import PostMessageParams, PostMessageOptions
+from nzovu.client import NzovuClient
+from nzovu.utils import PostMessageParams, PostMessageOptions
 from ..models.request_models import CartItems
 from config.settings import QUEUE_NAME_STORE_CART
 
@@ -9,7 +9,7 @@ from config.settings import QUEUE_NAME_STORE_CART
 logging.basicConfig(level=logging.INFO)
 
 
-async def process_cart(cart_id: str, cart: CartItems, client: ChronoqueueClient):
+async def process_cart(cart_id: str, cart: CartItems, client: NzovuClient):
     try:
         # Business logic to process the cart
         # Here, we're simply queuing the cart for checkout

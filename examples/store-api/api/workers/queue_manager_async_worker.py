@@ -2,19 +2,19 @@
 Async Queue Manager Workers
 
 These workers ensure the required queues exist when the async application starts.
-Uses AsyncChronoqueueClient for non-blocking queue creation operations.
+Uses AsyncNzovuClient for non-blocking queue creation operations.
 """
 
 import asyncio
 import logging
-from chronoqueue.utils import QueueOptions, QueueType, LeasePolicyOptions, MessageRetentionPolicy, RetentionMode
-from chronoqueue.async_client import AsyncChronoqueueClient
+from nzovu.utils import QueueOptions, QueueType, LeasePolicyOptions, MessageRetentionPolicy, RetentionMode
+from nzovu.async_client import AsyncNzovuClient
 from config.settings import QUEUE_NAME_STORE_CART, QUEUE_NAME_CHECKOUT_CART, CHECKOUT_QUEUE_EXCLUSIVE_KEY
 
 logger = logging.getLogger(__name__)
 
 
-async def create_store_cart_queue_async(async_client: AsyncChronoqueueClient):
+async def create_store_cart_queue_async(async_client: AsyncNzovuClient):
     """
     Async worker to ensure 'store-cart' queue exists.
 
@@ -65,7 +65,7 @@ async def create_store_cart_queue_async(async_client: AsyncChronoqueueClient):
                 logger.error("❌ [ASYNC] Max retries reached for 'store-cart' queue creation")
 
 
-async def create_checkout_cart_queue_async(async_client: AsyncChronoqueueClient):
+async def create_checkout_cart_queue_async(async_client: AsyncNzovuClient):
     """
     Async worker to ensure 'checkout-cart' queue exists.
 

@@ -5,10 +5,19 @@ from unittest.mock import Mock
 import grpc
 import pytest
 
-from chronoqueue.api.queueservice.v1 import request_response_pb2, service_pb2_grpc
-from chronoqueue.client import ChronoqueueClient
-from chronoqueue.exceptions import RpcOperationError
-from chronoqueue.utils import AcknowledgeMessageParams, MessageRetentionPolicy, MessageState, PeekQueueMessagesParams, PostMessageParams, QueueOptions, RetentionMode, TransactionMode
+from nzovu.api.queueservice.v1 import request_response_pb2, service_pb2_grpc
+from nzovu.client import NzovuClient
+from nzovu.exceptions import RpcOperationError
+from nzovu.utils import (
+    AcknowledgeMessageParams,
+    MessageRetentionPolicy,
+    MessageState,
+    PeekQueueMessagesParams,
+    PostMessageParams,
+    QueueOptions,
+    RetentionMode,
+    TransactionMode,
+)
 
 
 @pytest.fixture
@@ -16,7 +25,7 @@ def mock_client():
     mock_channel = Mock(spec=grpc.Channel)
     mock_channel._channel = Mock()
     mock_channel._channel.check_connectivity_state = Mock()
-    client = ChronoqueueClient("localhost", 50051, use_tls=False)
+    client = NzovuClient("localhost", 50051, use_tls=False)
     client.channel = mock_channel
     # Mock the QueueServiceStub
     client.stub = Mock(spec=service_pb2_grpc.QueueServiceStub(mock_channel))
@@ -34,7 +43,7 @@ class MockRpcError(grpc.RpcError):
         return self._details
 
 
-def test_create_queue(mock_client: ChronoqueueClient):
+def test_create_queue(mock_client: NzovuClient):
     # Mock the gRPC response
     mock_response = request_response_pb2.CreateQueueResponse()
     mock_client.stub.CreateQueue.return_value = mock_response
@@ -47,7 +56,7 @@ def test_create_queue(mock_client: ChronoqueueClient):
     assert response.to_proto() == mock_response
 
 
-def test_create_queue_with_retention_duration(mock_client: ChronoqueueClient):
+def test_create_queue_with_retention_duration(mock_client: NzovuClient):
     mock_response = request_response_pb2.CreateQueueResponse()
     mock_client.stub.CreateQueue.return_value = mock_response
 
@@ -61,7 +70,7 @@ def test_create_queue_with_retention_duration(mock_client: ChronoqueueClient):
     assert call_args.metadata.message_retention_policy.retention_seconds == 86400
 
 
-def test_create_queue_with_retention_forever(mock_client: ChronoqueueClient):
+def test_create_queue_with_retention_forever(mock_client: NzovuClient):
     mock_response = request_response_pb2.CreateQueueResponse()
     mock_client.stub.CreateQueue.return_value = mock_response
 
@@ -72,8 +81,8 @@ def test_create_queue_with_retention_forever(mock_client: ChronoqueueClient):
     assert call_args.metadata.message_retention_policy.mode == 2  # RETAIN_FOREVER
 
 
-def test_create_queue_with_lease_policy(mock_client: ChronoqueueClient):
-    from chronoqueue.utils import LeasePolicyOptions
+def test_create_queue_with_lease_policy(mock_client: NzovuClient):
+    from nzovu.utils import LeasePolicyOptions
 
     mock_response = request_response_pb2.CreateQueueResponse()
     mock_client.stub.CreateQueue.return_value = mock_response
@@ -86,7 +95,7 @@ def test_create_queue_with_lease_policy(mock_client: ChronoqueueClient):
     assert call_args.metadata.lease_policy.heartbeat_timeout.seconds == 10
 
 
-def test_error_scenario(mock_client: ChronoqueueClient):
+def test_error_scenario(mock_client: NzovuClient):
     # Mock gRPC method to raise an RpcError
     mock_client.stub.CreateQueue.side_effect = MockRpcError("An error occurred")
 
@@ -95,7 +104,7 @@ def test_error_scenario(mock_client: ChronoqueueClient):
         mock_client.create_queue(name="test_queue")
 
 
-def test_delete_queue(mock_client: ChronoqueueClient):
+def test_delete_queue(mock_client: NzovuClient):
     # Mock the gRPC response
     mock_response = request_response_pb2.DeleteQueueResponse()
     mock_client.stub.DeleteQueue.return_value = mock_response
@@ -108,7 +117,7 @@ def test_delete_queue(mock_client: ChronoqueueClient):
     assert response.to_proto() == mock_response
 
 
-def test_post_message(mock_client: ChronoqueueClient):
+def test_post_message(mock_client: NzovuClient):
     # Mock the gRPC response
     # mock_response = request_response_pb2.PostMessageResponse(success=True, message_id="12345")
     mock_response = request_response_pb2.PostMessageResponse()
@@ -127,7 +136,7 @@ def test_post_message(mock_client: ChronoqueueClient):
     assert response.to_proto() == mock_response
 
 
-def test_get_next_message(mock_client: ChronoqueueClient):
+def test_get_next_message(mock_client: NzovuClient):
     # Mock the gRPC response
     mock_response = request_response_pb2.GetNextMessageResponse()
     mock_client.stub.GetNextMessage.return_value = mock_response
@@ -140,7 +149,7 @@ def test_get_next_message(mock_client: ChronoqueueClient):
     assert response.to_proto() == mock_response
 
 
-def test_heartbeat_management(mock_client: ChronoqueueClient):
+def test_heartbeat_management(mock_client: NzovuClient):
     # Mock the gRPC response
     mock_response = request_response_pb2.SendMessageHeartBeatResponse()
     mock_client.stub.SendMessageHeartBeat.return_value = mock_response
@@ -158,7 +167,7 @@ def test_heartbeat_management(mock_client: ChronoqueueClient):
     assert response.to_proto() == mock_response
 
 
-def test_acknowledge_message(mock_client: ChronoqueueClient):
+def test_acknowledge_message(mock_client: NzovuClient):
     # Mock the gRPC response
     mock_response = request_response_pb2.AcknowledgeMessageResponse()
     mock_client.stub.AcknowledgeMessage.return_value = mock_response
@@ -174,7 +183,7 @@ def test_acknowledge_message(mock_client: ChronoqueueClient):
     assert response.to_proto() == mock_response
 
 
-def test_renew_message_lease(mock_client: ChronoqueueClient):
+def test_renew_message_lease(mock_client: NzovuClient):
     # Mock the gRPC response
     mock_response = request_response_pb2.RenewMessageLeaseResponse()
     mock_client.stub.RenewMessageLease.return_value = mock_response
@@ -190,7 +199,7 @@ def test_renew_message_lease(mock_client: ChronoqueueClient):
     assert response.to_proto() == mock_response
 
 
-def test_list_queues(mock_client: ChronoqueueClient):
+def test_list_queues(mock_client: NzovuClient):
     mock_response = request_response_pb2.ListQueuesResponse()
     mock_client.stub.ListQueues.return_value = mock_response
 
@@ -202,13 +211,13 @@ def test_list_queues(mock_client: ChronoqueueClient):
     assert response.to_proto() == mock_response
 
 
-def test_peek_queue_messages(mock_client: ChronoqueueClient):
+def test_peek_queue_messages(mock_client: NzovuClient):
     # Mock the gRPC response
     mock_response = request_response_pb2.PeekQueueMessagesResponse()
     mock_client.stub.PeekQueueMessages.return_value = mock_response
 
     # Prepare params
-    params = PeekQueueMessagesParams(queue_name="test_queue", limit=5, priority_range=None)
+    params = PeekQueueMessagesParams(queue_name="test_queue", page_size=5, priority_range=None)
 
     # Call the client's method
     response = mock_client.peek_queue_messages(params=params)
@@ -218,14 +227,14 @@ def test_peek_queue_messages(mock_client: ChronoqueueClient):
     assert response.to_proto() == mock_response
 
 
-def test_peek_queue_messages_with_priority_range(mock_client: ChronoqueueClient):
-    from chronoqueue.utils import MessagePriorityRange
+def test_peek_queue_messages_with_priority_range(mock_client: NzovuClient):
+    from nzovu.utils import MessagePriorityRange
 
     mock_response = request_response_pb2.PeekQueueMessagesResponse()
     mock_client.stub.PeekQueueMessages.return_value = mock_response
 
     params = PeekQueueMessagesParams(
-        queue_name="test_queue", limit=5, priority_range=MessagePriorityRange(min=2, max=4)
+        queue_name="test_queue", page_size=5, priority_range=MessagePriorityRange(min=2, max=4)
     )
     mock_client.peek_queue_messages(params=params)
 
@@ -234,7 +243,7 @@ def test_peek_queue_messages_with_priority_range(mock_client: ChronoqueueClient)
     assert call_args.priority_range.max == 4
 
 
-def test_get_queue_state(mock_client: ChronoqueueClient):
+def test_get_queue_state(mock_client: NzovuClient):
     # Mock the gRPC response
     mock_response = request_response_pb2.GetQueueStateResponse()
     mock_client.stub.GetQueueState.return_value = mock_response
@@ -247,7 +256,7 @@ def test_get_queue_state(mock_client: ChronoqueueClient):
     assert response.to_proto() == mock_response
 
 
-def test_close_and_succeed(mock_client: ChronoqueueClient):
+def test_close_and_succeed(mock_client: NzovuClient):
     """
     Test the happy path where the channel is open and can be closed without issues.
     """
@@ -265,7 +274,7 @@ def test_close_and_succeed(mock_client: ChronoqueueClient):
     mock_client.channel.close.assert_called_once()
 
 
-def test_close_channel_already_closed_or_none(mock_client: ChronoqueueClient):
+def test_close_channel_already_closed_or_none(mock_client: NzovuClient):
     """
     Test trying to close a channel that's either already closed or is None.
     """
@@ -285,7 +294,7 @@ def test_close_channel_already_closed_or_none(mock_client: ChronoqueueClient):
     mock_client.channel.close.assert_not_called()
 
 
-def test_close_with_error(mock_client: ChronoqueueClient):
+def test_close_with_error(mock_client: NzovuClient):
     """
     Test the scenario where an error is raised when trying to close the channel.
     """
@@ -305,7 +314,7 @@ def test_close_with_error(mock_client: ChronoqueueClient):
     mock_client._heartbeat_manager_thread.join.assert_called_once()
 
 
-def test_cancel_message_success(mock_client: ChronoqueueClient):
+def test_cancel_message_success(mock_client: NzovuClient):
     """Test cancel_message method."""
     # Mock the gRPC response
     mock_response = request_response_pb2.CancelMessageResponse(success=True)
@@ -326,7 +335,7 @@ def test_cancel_message_success(mock_client: ChronoqueueClient):
     assert request.reason == "Order cancelled"
 
 
-def test_cancel_message_without_reason(mock_client: ChronoqueueClient):
+def test_cancel_message_without_reason(mock_client: NzovuClient):
     """Test cancel_message without optional reason."""
     # Mock the gRPC response
     mock_response = request_response_pb2.CancelMessageResponse(success=True)
@@ -346,7 +355,7 @@ def test_cancel_message_without_reason(mock_client: ChronoqueueClient):
     assert request.message_id == "msg-456"
 
 
-def test_cancel_message_error(mock_client: ChronoqueueClient):
+def test_cancel_message_error(mock_client: NzovuClient):
     """Test cancel_message error handling."""
     # Mock gRPC method to raise an RpcError
     mock_client.stub.CancelMessage.side_effect = MockRpcError("Message not found")
@@ -356,7 +365,7 @@ def test_cancel_message_error(mock_client: ChronoqueueClient):
         mock_client.cancel_message("test_queue", "msg-999")
 
 
-def test_post_messages_bulk_all_or_nothing(mock_client: ChronoqueueClient):
+def test_post_messages_bulk_all_or_nothing(mock_client: NzovuClient):
     """Test post_messages_bulk with ALL_OR_NOTHING transaction mode."""
     # Mock the gRPC response
     mock_response = request_response_pb2.PostMessagesBulkResponse(
@@ -388,7 +397,7 @@ def test_post_messages_bulk_all_or_nothing(mock_client: ChronoqueueClient):
     assert len(request.messages) == 3
 
 
-def test_post_messages_bulk_best_effort(mock_client: ChronoqueueClient):
+def test_post_messages_bulk_best_effort(mock_client: NzovuClient):
     """Test post_messages_bulk with BEST_EFFORT transaction mode."""
     # Mock the gRPC response with partial success
     mock_response = request_response_pb2.PostMessagesBulkResponse(
@@ -420,7 +429,7 @@ def test_post_messages_bulk_best_effort(mock_client: ChronoqueueClient):
     assert len(request.messages) == 3
 
 
-def test_post_messages_bulk_invalid_transaction_mode(mock_client: ChronoqueueClient):
+def test_post_messages_bulk_invalid_transaction_mode(mock_client: NzovuClient):
     """Test post_messages_bulk with invalid transaction mode."""
     messages = [
         PostMessageParams(message_id="msg1", data={"key": "value1"}, queue_name="test_queue"),
@@ -431,7 +440,7 @@ def test_post_messages_bulk_invalid_transaction_mode(mock_client: ChronoqueueCli
         mock_client.post_messages_bulk("test_queue", messages, transaction_mode="INVALID_MODE")
 
 
-def test_post_messages_bulk_grpc_error(mock_client: ChronoqueueClient):
+def test_post_messages_bulk_grpc_error(mock_client: NzovuClient):
     """Test post_messages_bulk error handling."""
     # Mock gRPC method to raise an RpcError
     mock_client.stub.PostMessagesBulk.side_effect = MockRpcError("Queue not found")
@@ -445,7 +454,7 @@ def test_post_messages_bulk_grpc_error(mock_client: ChronoqueueClient):
         mock_client.post_messages_bulk("test_queue", messages)
 
 
-def test_post_messages_bulk_empty_list(mock_client: ChronoqueueClient):
+def test_post_messages_bulk_empty_list(mock_client: NzovuClient):
     """Test post_messages_bulk with empty message list."""
     mock_response = request_response_pb2.PostMessagesBulkResponse(
         success=True,
@@ -462,7 +471,7 @@ def test_post_messages_bulk_empty_list(mock_client: ChronoqueueClient):
     assert response.to_proto() == mock_response
 
 
-def test_post_messages_bulk_with_enum_all_or_nothing(mock_client: ChronoqueueClient):
+def test_post_messages_bulk_with_enum_all_or_nothing(mock_client: NzovuClient):
     """Test post_messages_bulk with TransactionMode enum (ALL_OR_NOTHING)."""
     mock_response = request_response_pb2.PostMessagesBulkResponse(
         success=True,
@@ -488,7 +497,7 @@ def test_post_messages_bulk_with_enum_all_or_nothing(mock_client: ChronoqueueCli
     assert request.transaction_mode == request_response_pb2.PostMessagesBulkRequest.ALL_OR_NOTHING
 
 
-def test_post_messages_bulk_with_enum_best_effort(mock_client: ChronoqueueClient):
+def test_post_messages_bulk_with_enum_best_effort(mock_client: NzovuClient):
     """Test post_messages_bulk with TransactionMode enum (BEST_EFFORT)."""
     mock_response = request_response_pb2.PostMessagesBulkResponse(
         success=True,

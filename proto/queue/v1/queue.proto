@@ -1,16 +1,16 @@
-// ChronoQueue Queue API v1
+// Nzovu Queue API v1
 //
 // This file defines queue structures and configurations.
 // Queues are named containers for messages with specific processing behaviors.
 
 syntax = "proto3";
 
-package chronoqueue.api.queue.v1;
+package nzovu.api.queue.v1;
 
 import "proto/common/v1/common.proto";
 import "google/protobuf/duration.proto";
 
-option go_package = "github.com/adrien19/chronoqueue/api/queue/v1;queue";
+option go_package = "github.com/adrien19/nzovu/api/queue/v1;queue";
 
 // QueueType defines the message consumption pattern.
 //
@@ -19,8 +19,8 @@ option go_package = "github.com/adrien19/chronoqueue/api/queue/v1;queue";
 // - EXCLUSIVE: Single-consumer queues for ordered processing or exclusive access.
 enum QueueType {
   SIMPLE    = 0; // Multiple workers can consume messages concurrently (default)
-  EXCLUSIVE = 1; // Only one worker can consume from this queue at a time
-                    // Use for: ordered processing, singleton workers, exclusive locks
+  EXCLUSIVE = 1; // Only one message can hold a RUNNING lease in this queue at a time.
+                    // Claims require the queue's configured exclusivity key.
 }
 
 // QueueMetadata defines the configuration and behavior of a queue.
@@ -50,7 +50,7 @@ message QueueMetadata {
 
     // type: Determines message consumption pattern.
     // SIMPLE: Multiple workers process concurrently (most common).
-    // EXCLUSIVE: Single worker processes sequentially (ensures order).
+    // EXCLUSIVE: One RUNNING lease at a time; claims require exclusivity_key.
   QueueType type = 1;
 
     // default_max_attempts: Default retry count for messages without explicit max_attempts.
@@ -66,21 +66,20 @@ message QueueMetadata {
     // Balance between: too short = unnecessary retries, too long = slow failure detection.
   google.protobuf.Duration lease_duration = 3;
 
-    // exclusivity_key: For EXCLUSIVE queues, this key ensures single-consumer access.
-    // Only one worker with a matching exclusivity key can consume from this queue.
-    // Leave empty for non-exclusive queues.
-    // Use cases: ordered processing, singleton workers, distributed locks.
+    // exclusivity_key: Required for EXCLUSIVE queues and for every claim against them.
+    // While an exclusive message is RUNNING, other claims return no message. A new
+    // claim can succeed after ACK/NACK or after an expired lease is reclaimed.
+    // Leave empty for non-exclusive queues. This key is not an authentication secret.
   string exclusivity_key = 4;
 
     // dead_letter_queue_name: Name of the DLQ for messages that exhaust retries.
     // Messages that fail after max_attempts are moved here for investigation.
-    // Naming convention: "{original-queue}-dlq" or "{original-queue}-errors"
-    // Access DLQ messages via DLQ APIs: GetDLQMessage, ListDLQMessages, RequeueDLQMessage.
+    // Optional when auto_create_dlq is false; the named queue must already exist.
+    // Access DLQ messages via DLQ APIs: GetDLQMessages and RequeueDLQMessage.
   string dead_letter_queue_name = 6;
 
-    // auto_create_dlq: If true, ChronoQueue automatically creates the DLQ if it doesn't exist.
-    // Recommended: true for production (ensures no messages are lost).
-    // Set to false if you want to manually control DLQ creation and configuration.
+    // auto_create_dlq: If true, Nzovu creates "{source_queue}_dlq" and stores
+    // that computed name in dead_letter_queue_name. Any supplied name is replaced.
   bool auto_create_dlq = 7;
 
     // schema_id: Default schema for validating messages posted to this queue.
@@ -104,8 +103,8 @@ message QueueMetadata {
   int32 max_payload_size = 10;
 
     // allowed_content_types: List of permitted MIME types for message payloads.
-    // Empty list = all content types allowed (default).
-    // Examples: ["application/json"], ["application/json", "application/xml"]
+    // Empty list = all supported JSON content types allowed (default).
+    // Examples: ["application/json"], ["application/json", "application/x-json"]
     // Use to enforce data format standards across your organization.
   repeated string allowed_content_types = 11;
 
@@ -119,7 +118,7 @@ message QueueMetadata {
     // Lease model defaults (queue-level)
     // ---------------------------------------------------------------------------
     // Message-level policies can selectively override these fields.
-  chronoqueue.api.common.v1.LeasePolicy lease_policy = 13;
+  nzovu.api.common.v1.LeasePolicy lease_policy = 13;
 
     // message_retention_policy: Controls how long messages are retained after completion/error.
     // By default (if not set), messages are deleted immediately upon acknowledgment.
@@ -185,13 +184,13 @@ enum FairnessPolicy {
                     // Example: Process 70% high, 20% medium, 10% low priority messages
                     // Use when: You want guaranteed progress for all priorities
 
-  AGING = 2; // Boost priority of messages waiting too long
-                    // Low-priority messages gradually increase priority over time
-                    // Use when: You want to prevent starvation while maintaining priorities
+  AGING = 2; // Boost a priority band's selection weight when its oldest message waits too long
+                    // The configured boost is applied once after the threshold is reached
+                    // Use when: You want to reduce starvation while maintaining priority bands
 
   HYBRID = 3; // Combines weighted and aging strategies
-                    // Most sophisticated - maintains priorities while ensuring progress
-                    // Use when: Complex requirements (e.g., SLA-based processing)
+                    // Applies configured weights plus a one-time age boost to eligible bands
+                    // Use when: Weighted processing also needs an age-based starvation guard
 }
 
 // PriorityConfig provides fine-grained control over priority-based processing.
@@ -205,7 +204,7 @@ enum FairnessPolicy {
       //           0: 10,  // Low priority: 10%
       //       },
 //       AgeBoostThreshold: durationpb.New(30*time.Minute),  // Boost after 30min wait
-//       AgeBoostMultiplier: 2,  // Double the priority every 30min
+//       AgeBoostMultiplier: 2,  // Double the band's weight after a 30min wait
 //   }
 message PriorityConfig {
     // policy: The fairness strategy to use.
@@ -218,22 +217,22 @@ message PriorityConfig {
     // Weights are relative - they're normalized to percentages.
   map<int32, int32> priority_weights = 2;
 
-    // age_boost_threshold: For AGING/HYBRID policies, how long before boosting priority.
-    // Messages waiting longer than this duration get their priority boosted.
+    // age_boost_threshold: For AGING/HYBRID policies, how long before boosting a band's weight.
+    // The boost applies when the oldest eligible message in the band reaches this duration.
     // Prevents indefinite starvation of low-priority messages.
     // Typical values: 15m (aggressive), 30m (standard), 1h (relaxed).
   google.protobuf.Duration age_boost_threshold = 3;
 
-    // age_boost_multiplier: For AGING/HYBRID policies, how much to boost priority.
-    // Priority multiplied by this factor every age_boost_threshold period.
-    // Example: multiplier=2, threshold=30m means priority doubles every 30 minutes.
-    // Typical values: 1.5 (gentle), 2 (standard), 3 (aggressive).
+    // age_boost_multiplier: For AGING/HYBRID policies, how much to boost an eligible band's weight.
+    // The weight is multiplied by this factor once while the threshold condition holds.
+    // Example: multiplier=2, threshold=30m means the band's weight doubles after 30 minutes.
+    // Typical values: 1 (gentle), 2 (standard), 3 (aggressive).
   int32 age_boost_multiplier = 4;
 }
 
 // Queue represents a named message container with specific processing behavior.
 //
-// Queues are the primary organizational unit in ChronoQueue.
+// Queues are the primary organizational unit in Nzovu.
 // Create separate queues for different types of work to:
 // - Isolate failures (one queue's DLQ doesn't affect others)
 // - Apply different processing rules (retries, priorities, leases)
@@ -248,7 +247,7 @@ message PriorityConfig {
 // - "cleanup-tasks-low"         // Background maintenance
 message Queue {
     // name: Unique identifier for this queue.
-    // Must be unique across your ChronoQueue instance.
+    // Must be unique across your Nzovu instance.
     // Naming convention: lowercase, hyphens, descriptive
     // Examples: "order-processing", "email-sender", "webhook-delivery"
   string name = 1;

@@ -1,14 +1,14 @@
 """
-Unit tests for schedule operations in ChronoqueueClient.
+Unit tests for schedule operations in NzovuClient.
 """
 
 import unittest
 from unittest.mock import MagicMock, patch
 
-from chronoqueue.api.queueservice.v1 import request_response_pb2
-from chronoqueue.api.schedule.v1 import schedule_pb2
-from chronoqueue.client import ChronoqueueClient
-from chronoqueue.utils import ScheduleOptions, ScheduleState
+from nzovu.api.queueservice.v1 import request_response_pb2
+from nzovu.api.schedule.v1 import schedule_pb2
+from nzovu.client import NzovuClient
+from nzovu.utils import ScheduleOptions, ScheduleState
 
 
 class TestScheduleOperations(unittest.TestCase):
@@ -17,9 +17,9 @@ class TestScheduleOperations(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.mock_stub = MagicMock()
-        with patch("chronoqueue.client.service_pb2_grpc.QueueServiceStub", return_value=self.mock_stub):
-            with patch("chronoqueue.client.grpc.insecure_channel"):
-                self.client = ChronoqueueClient(host="localhost", port=50051, use_tls=False)
+        with patch("nzovu.client.service_pb2_grpc.QueueServiceStub", return_value=self.mock_stub):
+            with patch("nzovu.client.grpc.insecure_channel"):
+                self.client = NzovuClient(host="localhost", port=50051, use_tls=False)
 
     def test_create_schedule_with_cron(self):
         """Test creating a schedule with cron configuration."""
@@ -73,8 +73,7 @@ class TestScheduleOperations(unittest.TestCase):
             payload={"task": "test"},
             queue_name="test_queue",
             cron_schedule="0 * * * *",
-            exclusivity_key="test_key",
-            priority=5,
+            priority=4,
             max_messages=100,
             lease_duration="5m",
             timezone="America/New_York",
@@ -86,8 +85,7 @@ class TestScheduleOperations(unittest.TestCase):
         self.client.create_schedule("test_schedule", options)
 
         call_args = self.mock_stub.CreateSchedule.call_args[0][0]
-        self.assertEqual(call_args.schedule.metadata.exclusivity_key, "test_key")
-        self.assertEqual(call_args.schedule.metadata.priority, 5)
+        self.assertEqual(call_args.schedule.metadata.priority, 4)
         self.assertEqual(call_args.schedule.metadata.max_messages, 100)
         self.assertTrue(call_args.schedule.metadata.has_max_messages)
         self.assertEqual(call_args.schedule.metadata.timezone, "America/New_York")
@@ -149,14 +147,14 @@ class TestScheduleOperations(unittest.TestCase):
         mock_response = request_response_pb2.GetScheduleHistoryResponse()
         self.mock_stub.GetScheduleHistory.return_value = mock_response
 
-        result = self.client.get_schedule_history("test_schedule", limit=20)
+        result = self.client.get_schedule_history("test_schedule", page_size=20)
 
         self.mock_stub.GetScheduleHistory.assert_called_once()
         self.assertIsNotNone(result)
 
         call_args = self.mock_stub.GetScheduleHistory.call_args[0][0]
         self.assertEqual(call_args.schedule_id, "test_schedule")
-        self.assertEqual(call_args.limit, 20)
+        self.assertEqual(call_args.page_size, 20)
 
     def test_pause_schedule(self):
         """Test pausing a schedule."""

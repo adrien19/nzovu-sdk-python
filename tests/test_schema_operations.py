@@ -1,14 +1,14 @@
 """
-Unit tests for schema operations in ChronoqueueClient.
+Unit tests for schema operations in NzovuClient.
 """
 
 import unittest
 from unittest.mock import MagicMock, patch
 
-from chronoqueue.api.queueservice.v1 import request_response_pb2
-from chronoqueue.api.schema.v1 import schema_pb2
-from chronoqueue.client import ChronoqueueClient
-from chronoqueue.utils import SchemaOptions
+from nzovu.api.queueservice.v1 import request_response_pb2
+from nzovu.api.schema.v1 import schema_pb2
+from nzovu.client import NzovuClient
+from nzovu.utils import SchemaOptions
 
 
 class TestSchemaOperations(unittest.TestCase):
@@ -17,9 +17,9 @@ class TestSchemaOperations(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.mock_stub = MagicMock()
-        with patch("chronoqueue.client.service_pb2_grpc.QueueServiceStub", return_value=self.mock_stub):
-            with patch("chronoqueue.client.grpc.insecure_channel"):
-                self.client = ChronoqueueClient(host="localhost", port=50051, use_tls=False)
+        with patch("nzovu.client.service_pb2_grpc.QueueServiceStub", return_value=self.mock_stub):
+            with patch("nzovu.client.grpc.insecure_channel"):
+                self.client = NzovuClient(host="localhost", port=50051, use_tls=False)
 
     def test_register_schema(self):
         """Test registering a schema."""
@@ -102,7 +102,7 @@ class TestSchemaOperations(unittest.TestCase):
         self.mock_stub.ListSchemas.assert_called_once()
         call_args = self.mock_stub.ListSchemas.call_args[0][0]
         self.assertEqual(call_args.prefix, "")
-        self.assertEqual(call_args.limit, 100)
+        self.assertEqual(call_args.page_size, 100)
         self.assertEqual(call_args.active_only, False)
 
     def test_list_schemas_with_filters(self):
@@ -110,11 +110,11 @@ class TestSchemaOperations(unittest.TestCase):
         mock_response = request_response_pb2.ListSchemasResponse(total_count=5)
         self.mock_stub.ListSchemas.return_value = mock_response
 
-        self.client.list_schemas(prefix="order_", limit=50, active_only=True)
+        self.client.list_schemas(prefix="order_", page_size=50, active_only=True)
 
         call_args = self.mock_stub.ListSchemas.call_args[0][0]
         self.assertEqual(call_args.prefix, "order_")
-        self.assertEqual(call_args.limit, 50)
+        self.assertEqual(call_args.page_size, 50)
         self.assertEqual(call_args.active_only, True)
 
     def test_delete_schema_specific_version(self):

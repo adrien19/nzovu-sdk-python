@@ -37,7 +37,7 @@ Steps to reproduce the behavior:
 
 - OS: [e.g., Ubuntu 22.04, macOS 13.0, Windows 11]
 - Python Version: [e.g., 3.10.5]
-- Chronoqueue SDK Version: [e.g., 0.1.0]
+- Nzovu SDK Version: [e.g., 0.1.0]
 - Installation Method: [pip, poetry, etc.]
 
 ## Additional Context

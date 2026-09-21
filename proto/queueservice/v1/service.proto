@@ -1,6 +1,6 @@
-// ChronoQueue Service API v1
+// Nzovu Service API v1
 //
-// This file defines the complete gRPC service interface for ChronoQueue.
+// This file defines the complete gRPC service interface for Nzovu.
 // All client operations go through this service.
 //
 // Service categories:
@@ -15,15 +15,15 @@
 // REST endpoints follow Google API Design Guide conventions.
 
 syntax = "proto3";
-package chronoqueue.api.queueservice.v1;
+package nzovu.api.queueservice.v1;
 
-option go_package = "github.com/adrien19/chronoqueue/api/queueservice/v1;queueservice";
+option go_package = "github.com/adrien19/nzovu/api/queueservice/v1;queueservice";
 
 import "proto/google/api/annotations.proto";
 // import "proto/google/api/field_behavior.proto";
 import "proto/queueservice/v1/request_response.proto";
 
-// QueueService is the primary API for interacting with ChronoQueue.
+// QueueService is the primary API for interacting with Nzovu.
 //
 // This service provides:
 // - Queue lifecycle management
@@ -61,18 +61,15 @@ service QueueService {
     // Example:
     //   POST /v1/queues
     //   {
-    //     "queue": {
-    //       "name": "order-processing",
-    //       "metadata": {
-    //         "default_max_attempts": 3,
-    //         "lease_duration": "5m",
-    //         "dead_letter_queue_name": "order-dlq",
-    //         "auto_create_dlq": true
-    //       }
+    //     "name": "order-processing",
+    //     "metadata": {
+    //       "default_max_attempts": 3,
+    //       "lease_duration": "300s",
+    //       "auto_create_dlq": true
     //     }
     //   }
     //
-    // Returns: Queue details
+    // Returns: success status
     // Errors:
     //   - AlreadyExists: Queue with this name exists
     //   - InvalidArgument: Invalid configuration (negative lease_duration, etc.)
@@ -97,7 +94,7 @@ service QueueService {
     // Example:
     //   DELETE /v1/queues/order-processing
     //
-    // Returns: Empty response
+    // Returns: success status
     // Errors:
     //   - NotFound: Queue doesn't exist
   rpc DeleteQueue(DeleteQueueRequest) returns (DeleteQueueResponse) {
@@ -106,7 +103,7 @@ service QueueService {
     };
   }
 
-    // ListQueues returns all queues in your ChronoQueue instance.
+    // ListQueues returns all queues in your Nzovu instance.
     //
     // Use for:
     // - Monitoring dashboards
@@ -126,9 +123,8 @@ service QueueService {
     // GetQueueState returns current queue statistics and health.
     //
     // Provides:
-    // - Message counts by state (PENDING, RUNNING, COMPLETED, ERRORED)
-    // - Rate metrics (messages/sec, processing time)
-    // - DLQ size
+    // - Message counts by state (INVISIBLE, PENDING, RUNNING, COMPLETED, CANCELED, ERRORED)
+    // - Earliest active lease or heartbeat deadline
     //
     // Use for:
     // - Health checks
@@ -139,14 +135,10 @@ service QueueService {
     //   GET /v1/queues/order-processing/state
     //   Response:
     //   {
-    //     "pending_count": 150,
-    //     "running_count": 10,
-    //     "completed_count": 5420,
-    //     "errored_count": 3,
-    //     "dlq_count": 2
+    //     "stateCounts": {"INVISIBLE": "0", "PENDING": "150", "RUNNING": "10", "COMPLETED": "5420", "CANCELED": "0", "ERRORED": "3"}
     //   }
     //
-    // Returns: QueueState with counts and metrics
+    // Returns: state counts and the earliest active deadline
   rpc GetQueueState(GetQueueStateRequest) returns (GetQueueStateResponse) {
     option (google.api.http) = {
       get: "/v1/queues/{queue_name=*}/state"
@@ -167,13 +159,14 @@ service QueueService {
     // - Delayed execution (scheduled_time)
     // - Priority ordering
     // - Schema validation
-    // - Deduplication (idempotency_key)
+    // - Deduplication by message_id within the queue
     // - Exclusive processing (exclusivity_key)
     //
     // Example - immediate execution:
     //   POST /v1/queues/order-processing/messages
     //   {
     //     "message": {
+    //       "messageId": "order-123",
     //       "metadata": {
     //         "payload": {"data": "..."},
     //         "priority": 4
@@ -184,18 +177,19 @@ service QueueService {
     // Example - delayed execution (send email in 1 hour):
     //   {
     //     "message": {
+    //       "messageId": "email-123",
     //       "metadata": {
     //         "payload": {"data": "..."},
-    //         "scheduled_time": "2024-12-01T15:00:00Z"
+    //         "scheduledTime": "2024-12-01T15:00:00Z"
     //       }
     //     }
     //   }
     //
-    // Returns: Message with assigned message_id
+    // The caller must provide messageId. Returns success status.
     // Errors:
     //   - NotFound: Queue doesn't exist
     //   - InvalidArgument: Schema validation failed, invalid scheduled_time
-    //   - AlreadyExists: Duplicate idempotency_key (within dedup window)
+    //   - AlreadyExists: Duplicate message_id in the queue
   rpc PostMessage(PostMessageRequest) returns (PostMessageResponse) {
     option (google.api.http) = {
       post: "/v1/queues/{queue_name=*}/messages"
@@ -239,7 +233,8 @@ service QueueService {
     // Concurrency:
     // - Multiple workers can call simultaneously
     // - Each worker gets a different message (no duplicates)
-    // - Use exclusivity_key for single-threaded processing of related messages
+    // - EXCLUSIVE queues require their configured exclusivity_key and allow one
+    //   RUNNING message until it is acknowledged, failed, or reclaimed
     //
     // Example worker loop:
     //   for {
@@ -280,16 +275,16 @@ service QueueService {
     //
     // Effects:
     // - Message moves to COMPLETED state
-    // - Message removed from queue
+    // - Message retained or removed according to the queue retention policy
     // - Queue stats updated
     //
-    // Important: You must ACK within the lease_duration, or the message returns
-    // to PENDING and may be delivered to another worker.
+    // Important: attempt_id and worker_id from GetNextMessage are required and
+    // must identify the active, unexpired lease.
     //
     // Example:
     //   POST /v1/queues/order-processing/messages/msg-123:acknowledge
     //
-    // Returns: Empty response
+    // Returns: success status
     // Errors:
     //   - NotFound: Message doesn't exist or already acknowledged
     //   - DeadlineExceeded: Lease already expired
@@ -324,7 +319,7 @@ service QueueService {
     //   foreach messageId in userMessages:
     //       CancelMessage(queueName, messageId)
     //
-    // Returns: Empty response
+    // Returns: success status
     // Errors:
     //   - NotFound: Message doesn't exist
     //   - FailedPrecondition: Message is RUNNING, COMPLETED, ERRORED, or already CANCELED
@@ -343,6 +338,10 @@ service QueueService {
     // - External API calls with unpredictable latency
     //
     // Call periodically during processing to prevent lease expiration.
+    // attempt_id and worker_id from GetNextMessage are required and must identify
+    // the active, unexpired lease.
+    // An omitted lease_duration uses the queue/message extend_step. Renewal fails
+    // without consuming a renewal when no positive extension remains.
     //
     // Example pattern (heartbeat-style lease renewal):
     //   msg := getNextMessage()
@@ -365,7 +364,7 @@ service QueueService {
     //   close(done)
     //   acknowledgeMessage(msg.MessageId)
     //
-    // Returns: Updated message with new lease expiration
+    // Returns: remaining lease time and current state
     // Errors:
     //   - NotFound: Message doesn't exist or already completed
     //   - FailedPrecondition: Message not in RUNNING state
@@ -389,9 +388,9 @@ service QueueService {
     // - Affect message ordering
     //
     // Example:
-    //   GET /v1/queues/order-processing/messages:peek?count=10
+    //   GET /v1/queues/order-processing/messages:peek?page_size=10
     //
-    // Returns: List of messages (up to requested count)
+    // Returns: One deterministically ordered page of pending messages.
   rpc PeekQueueMessages(PeekQueueMessagesRequest) returns (PeekQueueMessagesResponse) {
     option (google.api.http) = {
       get: "/v1/queues/{queue_name=*}/messages:peek"
@@ -400,16 +399,20 @@ service QueueService {
 
     // SendMessageHeartBeat indicates a worker is still processing a message.
     //
-    // Alternative to RenewMessageLease with similar purpose but lighter weight.
-    // Useful for tracking worker health without extending lease.
+    // Alternative to RenewMessageLease that records worker liveness and extends
+    // the lease to the configured heartbeat timeout.
+    // attempt_id and worker_id from GetNextMessage are required and must identify
+    // the active, unexpired lease.
     //
     // Example:
     //   POST /v1/queues/order-processing/messages:heartbeat
     //   {
-    //     "message_ids": ["msg-123", "msg-456"]
+    //     "messageId": "msg-123",
+    //     "attemptId": "attempt-123",
+    //     "workerId": "worker-1"
     //   }
     //
-    // Returns: Empty response
+    // Returns: remaining lease time and current state
   rpc SendMessageHeartBeat(SendMessageHeartBeatRequest) returns (SendMessageHeartBeatResponse) {
     option (google.api.http) = {
       post: "/v1/queues/{queue_name=*}/messages:heartbeat"
@@ -447,7 +450,7 @@ service QueueService {
     //     }
     //   }
     //
-    // Returns: Created schedule with next_run time
+    // Returns: success status
     // Errors:
     //   - AlreadyExists: schedule_id already in use
     //   - InvalidArgument: Invalid cron expression or calendar rule
@@ -468,7 +471,7 @@ service QueueService {
     // Example:
     //   DELETE /v1/schedules/daily-sales-report
     //
-    // Returns: Empty response
+    // Returns: success status
     // Errors:
     //   - NotFound: Schedule doesn't exist
   rpc DeleteSchedule(DeleteScheduleRequest) returns (DeleteScheduleResponse) {
@@ -552,9 +555,10 @@ service QueueService {
     // Example:
     //   POST /v1/schedules/daily-sales-report:pause
     //
-    // Returns: Updated schedule
+    // Returns: success status
     // Errors:
     //   - NotFound: Schedule doesn't exist
+    //   - FailedPrecondition: Schedule not in SCHEDULED state
   rpc PauseSchedule(PauseScheduleRequest) returns (PauseScheduleResponse) {
     option (google.api.http) = {
       post: "/v1/schedules/{schedule_id=*}:pause"
@@ -566,13 +570,14 @@ service QueueService {
     //
     // Effects:
     // - Schedule state → SCHEDULED
-    // - Resumes creating messages on next scheduled time
+    // - Resets the max_messages execution counter
+    // - Retains next_run; an overdue run is eligible immediately after resume
     // - Does NOT backfill missed executions during pause
     //
     // Example:
     //   POST /v1/schedules/daily-sales-report:resume
     //
-    // Returns: Updated schedule with next_run
+    // Returns: success status
     // Errors:
     //   - NotFound: Schedule doesn't exist
     //   - FailedPrecondition: Schedule not in PAUSED state
@@ -598,7 +603,7 @@ service QueueService {
     // - Identifying systematic issues
     //
     // Example:
-    //   GET /v1/dlq/order-dlq/messages?limit=50
+    //   GET /v1/dlq/order-dlq/messages?page_size=50
     //
     // Returns: List of failed messages with error details
   rpc GetDLQMessages(GetDLQMessagesRequest) returns (GetDLQMessagesResponse) {
@@ -607,7 +612,7 @@ service QueueService {
     };
   }
 
-    // RequeueFromDLQ moves a message from DLQ back to its original queue.
+    // RequeueFromDLQ moves a message from DLQ to the required target queue.
     //
     // Use after:
     // - Fixing bugs that caused failures
@@ -616,18 +621,20 @@ service QueueService {
     //
     // Effects:
     // - Message removed from DLQ
-    // - Message added back to original queue as PENDING
-    // - attempts_left reset (or set to specified value)
+    // - Message added to targetQueue as PENDING
+    // - attempts_left always reset
     //
     // Example:
     //   POST /v1/dlq/order-dlq/messages/msg-123:requeue
     //   {
-    //     "max_attempts": 3  // Give it 3 more tries
+    //     "targetQueue": "orders"
     //   }
     //
-    // Returns: Requeued message
+    // Returns: success status
     // Errors:
     //   - NotFound: Message not in DLQ
+    //   - NotFound: Target queue does not exist
+    //   - InvalidArgument: targetQueue is empty
   rpc RequeueFromDLQ(RequeueFromDLQRequest) returns (RequeueFromDLQResponse) {
     option (google.api.http) = {
       post: "/v1/dlq/{dlq_name=*}/messages/{message_id=*}:requeue"
@@ -647,7 +654,7 @@ service QueueService {
     // Example:
     //   DELETE /v1/dlq/order-dlq/messages/msg-123
     //
-    // Returns: Empty response
+    // Returns: success status
     // Errors:
     //   - NotFound: Message not in DLQ
   rpc DeleteFromDLQ(DeleteFromDLQRequest) returns (DeleteFromDLQResponse) {
@@ -668,7 +675,7 @@ service QueueService {
     // Example:
     //   POST /v1/dlq/order-dlq:purge
     //
-    // Returns: Count of deleted messages
+    // Returns: Whether the purge succeeded
   rpc PurgeDLQ(PurgeDLQRequest) returns (PurgeDLQResponse) {
     option (google.api.http) = {
       post: "/v1/dlq/{dlq_name=*}:purge"
@@ -680,9 +687,7 @@ service QueueService {
     //
     // Provides:
     // - Message count
-    // - Age of oldest message
-    // - Common error types
-    // - Failure rate trends
+    // - Queue creation and update timestamps
     //
     // Use for:
     // - Monitoring DLQ health
@@ -704,7 +709,6 @@ service QueueService {
     // ValidateCalendarSchedule checks if a calendar schedule is valid.
     //
     // Validates:
-    // - Cron expression syntax
     // - Calendar rule correctness
     // - Timezone validity
     // - Holiday rule logic
@@ -760,7 +764,7 @@ service QueueService {
 
     // ==================== Schema Management Operations ====================
 
-    // RegisterSchema creates or updates a message validation schema.
+    // RegisterSchema creates the next version of a message validation schema.
     //
     // Use for:
     // - Enforcing message structure
@@ -769,24 +773,21 @@ service QueueService {
     // - Type safety
     //
     // Schema versioning:
-    // - Each schema has a schema_id and version number
+    // - Each schema has a schema_id and a server-assigned version number
     // - Multiple versions can coexist
     // - Queues reference schema_id (use highest active version)
     //
     // Example:
     //   POST /v1/schemas
     //   {
-    //     "schema": {
-    //       "schema_id": "order-schema",
-    //       "version": 2,
-    //       "content": "{...JSON Schema...}",
-    //       "content_type": "json-schema"
-    //     }
+    //     "schema_id": "order-schema",
+    //     "name": "Order schema",
+    //     "content": "{...JSON Schema...}",
+    //     "content_type": "json-schema"
     //   }
     //
     // Returns: Registered schema
     // Errors:
-    //   - AlreadyExists: schema_id + version already exists
     //   - InvalidArgument: Invalid schema syntax
   rpc RegisterSchema(RegisterSchemaRequest) returns (RegisterSchemaResponse) {
     option (google.api.http) = {
@@ -809,7 +810,7 @@ service QueueService {
     };
   }
 
-    // ListSchemas returns all registered schemas.
+    // ListSchemas returns one summary for each registered schema family.
     //
     // Use for:
     // - Schema discovery
@@ -819,29 +820,25 @@ service QueueService {
     // Example:
     //   GET /v1/schemas
     //
-    // Returns: List of schemas (all versions)
+    // Returns: Latest matching version and aggregate version metadata for each family
   rpc ListSchemas(ListSchemasRequest) returns (ListSchemasResponse) {
     option (google.api.http) = {
       get: "/v1/schemas"
     };
   }
 
-    // DeleteSchema removes a schema version.
+    // DeleteSchema deactivates a schema version, or all versions when version is 0.
     //
     // Effects:
-    // - Schema version deleted
-    // - Queues using this schema will fail validation
-    //
-    // Best practice: Mark schema as inactive (is_active = false) instead
-    // of deleting to preserve validation history.
+    // - Matching active schema versions are marked inactive
+    // - Inactive versions remain addressable for validation history
     //
     // Example:
     //   DELETE /v1/schemas/order-schema/versions/1
     //
-    // Returns: Empty response
+    // Returns: Number of versions deactivated
     // Errors:
     //   - NotFound: Schema not found
-    //   - FailedPrecondition: Schema in use by active queues
   rpc DeleteSchema(DeleteSchemaRequest) returns (DeleteSchemaResponse) {
     option (google.api.http) = {
       delete: "/v1/schemas/{schema_id=*}/versions/{version=*}"

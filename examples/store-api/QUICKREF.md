@@ -96,7 +96,7 @@ curl http://localhost:8000/store/health
 
 ### Queue Creation
 ```python
-from chronoqueue.utils import QueueOptions, QueueType
+from nzovu.utils import QueueOptions, QueueType
 
 queue_options = QueueOptions(
     type=QueueType.SIMPLE,
@@ -109,7 +109,7 @@ client.create_queue(name="my-queue", options=queue_options)
 
 ### Post Message
 ```python
-from chronoqueue.utils import PostMessageParams
+from nzovu.utils import PostMessageParams
 
 params = PostMessageParams(
     message_id="msg-123",
@@ -137,7 +137,7 @@ if response and response.message:
 
 ### Acknowledge Message
 ```python
-from chronoqueue.utils import AcknowledgeMessageParams, MessageState
+from nzovu.utils import AcknowledgeMessageParams, MessageState
 
 params = AcknowledgeMessageParams(
     message_id=response.message.message_id,

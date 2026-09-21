@@ -1,8 +1,8 @@
 [tool.poetry]
 name = "store-api"
 version = "0.1.0"
-description = "Example store API application using ChronoQueue Python SDK"
-authors = ["ChronoQueue Team"]
+description = "Example store API application using Nzovu Python SDK"
+authors = ["Nzovu Team"]
 readme = "README.md"
 packages = [{include = "api"}, {include = "config"}]
 
@@ -11,7 +11,7 @@ python = "^3.10"
 fastapi = "^0.104.0"
 uvicorn = {extras = ["standard"], version = "^0.38.0"}
 pydantic = "^2.12.3"
-chronoqueue = {path = "../..", develop = true}
+nzovu = {path = "../..", develop = true}
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.2"

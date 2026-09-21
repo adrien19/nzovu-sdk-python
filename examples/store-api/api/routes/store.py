@@ -1,12 +1,12 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from typing import Optional
 import os
-from chronoqueue.client import ChronoqueueClient
-from chronoqueue.utils import TlsConfig
+from nzovu.client import NzovuClient
+from nzovu.utils import TlsConfig
 from ..models.request_models import CartItems
 from ..models.response_models import CartResponse
 from ..workers import store_cart_worker
-from config.settings import CHRONOQUEUE_HOST, CHRONOQUEUE_PORT, QUEUE_NAME_STORE_CART, QUEUE_NAME_CHECKOUT_CART
+from config.settings import NZOVU_HOST, NZOVU_PORT, QUEUE_NAME_STORE_CART, QUEUE_NAME_CHECKOUT_CART
 
 router = APIRouter()
 
@@ -14,7 +14,7 @@ router = APIRouter()
 client_cache = None
 
 
-def get_chronoqueue_client():
+def get_nzovu_client():
     global client_cache
     if client_cache is None:
         try:
@@ -26,9 +26,9 @@ def get_chronoqueue_client():
             use_tls = all(os.path.exists(p) for p in [ca_path, client_crt_path, client_key_path])
 
             if use_tls:
-                client_cache = ChronoqueueClient(
-                    host=CHRONOQUEUE_HOST,
-                    port=CHRONOQUEUE_PORT,
+                client_cache = NzovuClient(
+                    host=NZOVU_HOST,
+                    port=NZOVU_PORT,
                     use_tls=True,
                     tls_config=TlsConfig(
                         ca_path=ca_path, client_crt_path=client_crt_path, client_key_path=client_key_path
@@ -36,9 +36,9 @@ def get_chronoqueue_client():
                 )
             else:
                 # Use insecure connection for testing/development
-                client_cache = ChronoqueueClient(
-                    host=CHRONOQUEUE_HOST,
-                    port=CHRONOQUEUE_PORT,
+                client_cache = NzovuClient(
+                    host=NZOVU_HOST,
+                    port=NZOVU_PORT,
                     use_tls=False,
                 )
         except Exception as e:
@@ -52,7 +52,7 @@ async def post_cart_items(
     cart_id: str,
     cart: CartItems,
     background_tasks: BackgroundTasks,
-    client: ChronoqueueClient = Depends(get_chronoqueue_client),
+    client: NzovuClient = Depends(get_nzovu_client),
 ):
     """
     Submit cart items for processing.
@@ -74,7 +74,7 @@ async def post_cart_items(
 
 
 @router.get("/queue/{queue_name}/stats")
-async def get_queue_stats(queue_name: str, client: ChronoqueueClient = Depends(get_chronoqueue_client)):
+async def get_queue_stats(queue_name: str, client: NzovuClient = Depends(get_nzovu_client)):
     """
     Get statistics for a specific queue.
 
@@ -98,7 +98,7 @@ async def get_queue_stats(queue_name: str, client: ChronoqueueClient = Depends(g
 async def list_queues(
     prefix: Optional[str] = None,
     limit: int = 100,
-    client: ChronoqueueClient = Depends(get_chronoqueue_client),
+    client: NzovuClient = Depends(get_nzovu_client),
 ):
     """
     List all queues or filter by prefix.
@@ -120,7 +120,7 @@ async def list_queues(
 
 
 @router.get("/queue/{queue_name}/messages/pending")
-async def get_pending_messages_count(queue_name: str, client: ChronoqueueClient = Depends(get_chronoqueue_client)):
+async def get_pending_messages_count(queue_name: str, client: NzovuClient = Depends(get_nzovu_client)):
     """
     Get count of pending messages in a queue.
 
@@ -142,7 +142,7 @@ async def get_pending_messages_count(queue_name: str, client: ChronoqueueClient 
 
 
 @router.delete("/queue/{queue_name}")
-async def delete_queue(queue_name: str, client: ChronoqueueClient = Depends(get_chronoqueue_client)):
+async def delete_queue(queue_name: str, client: NzovuClient = Depends(get_nzovu_client)):
     """
     Delete a queue (use with caution).
 

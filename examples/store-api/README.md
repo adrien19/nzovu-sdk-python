@@ -1,13 +1,13 @@
 # Store API Example - Heartbeat Demo
 
-This example demonstrates the **enhanced heartbeat features** of the ChronoQueue Python SDK with **both sync and async implementations**. It showcases automatic heartbeat management for long-running message processing, proper cleanup, and observability.
+This example demonstrates the **enhanced heartbeat features** of the Nzovu Python SDK with **both sync and async implementations**. It showcases automatic heartbeat management for long-running message processing, proper cleanup, and observability.
 
 ## � Two Implementations
 
 This example provides **two complete implementations**:
 
-1. **Sync Client** (`main.py`) - Uses `ChronoqueueClient` with threading-based heartbeats
-2. **Async Client** (`main_async.py`) - Uses `AsyncChronoqueueClient` with asyncio-based heartbeats
+1. **Sync Client** (`main.py`) - Uses `NzovuClient` with threading-based heartbeats
+2. **Async Client** (`main_async.py`) - Uses `AsyncNzovuClient` with asyncio-based heartbeats
 
 Both implementations demonstrate the same heartbeat features but with different concurrency models.
 
@@ -44,9 +44,9 @@ This example demonstrates:
 
 ## Prerequisites
 
-1. **ChronoQueue Server** - Must be running and accessible
+1. **Nzovu Server** - Must be running and accessible
    - Default: `localhost:9000`
-   - Configure via env vars: `CHRONOQUEUE_HOST` and `CHRONOQUEUE_PORT`
+   - Configure via env vars: `NZOVU_HOST` and `NZOVU_PORT`
    - See `deploy/docker-compose.yaml` for running with Docker
 
 2. **Python 3.10+**
@@ -61,12 +61,12 @@ cd examples/store-api
 poetry install
 ```
 
-The `pyproject.toml` uses the local ChronoQueue SDK:
+The `pyproject.toml` uses the local Nzovu SDK:
 ```toml
-chronoqueue = {path = "../..", develop = true}
+nzovu = {path = "../..", develop = true}
 ```
 
-### Start ChronoQueue Server (Optional)
+### Start Nzovu Server (Optional)
 
 If you have Docker Compose:
 
@@ -86,7 +86,7 @@ poetry run uvicorn api.main:app --host 0.0.0.0 --port 8001 --reload
 poetry run uvicorn api.main_async:app --host 0.0.0.0 --port 8002 --reload
 ```
 
-**Note**: The application will show connection errors in logs if the ChronoQueue server is not running. This is expected - the workers will retry connections automatically.
+**Note**: The application will show connection errors in logs if the Nzovu server is not running. This is expected - the workers will retry connections automatically.
 
 ### Submit a Cart
 
@@ -192,9 +192,9 @@ client.acknowledge_message(params)  # ✅ Heartbeat auto-stops here!
 #### 2. Configurable Heartbeat Parameters
 ```python
 # In api/main.py
-client = ChronoqueueClient(
-    host=CHRONOQUEUE_HOST,
-    port=CHRONOQUEUE_PORT,
+client = NzovuClient(
+    host=NZOVU_HOST,
+    port=NZOVU_PORT,
     use_tls=False,
     heartbeat_max_duration=120,      # Max 2 minutes per message
     heartbeat_max_count=500,         # Max 500 heartbeats
@@ -254,7 +254,7 @@ poetry run uvicorn api.main:app --host 0.0.0.0 --port 8001 --reload
 
 You'll see initialization logs:
 ```
-✅ ChronoQueue client initialized with enhanced heartbeat management
+✅ Nzovu client initialized with enhanced heartbeat management
    - Max heartbeat duration: 120s
    - Max heartbeat count: 500
    - Thread pool size: 10
@@ -346,12 +346,12 @@ Observe concurrent heartbeats:
 ### Test 3: Graceful Shutdown
 Stop the application (Ctrl+C) and watch graceful shutdown:
 ```
-🛑 Shutting down ChronoQueue client...
+🛑 Shutting down Nzovu client...
 ⚠️ Closing with 2 active heartbeat(s)
-Closing ChronoqueueClient, stopping all heartbeats...
+Closing NzovuClient, stopping all heartbeats...
 Signaling 2 active heartbeat(s) to stop
 Shutting down heartbeat thread pool...
-✅ ChronoQueue client closed successfully
+✅ Nzovu client closed successfully
 ```
 - ✅ **Comprehensive Tests** - 15 tests covering API and workers
 
@@ -386,8 +386,8 @@ COMPLETED
 
 Environment variables (see `config/settings.py`):
 
-- `CHRONOQUEUE_HOST` - ChronoQueue server host (default: `localhost`)
-- `CHRONOQUEUE_PORT` - ChronoQueue server port (default: `9000`)
+- `NZOVU_HOST` - Nzovu server host (default: `localhost`)
+- `NZOVU_PORT` - Nzovu server port (default: `9000`)
 - `FASTAPI_HOST` - FastAPI server host (default: `localhost`)
 - `FASTAPI_PORT` - FastAPI server port (default: `8000`)
 - `QUEUE_NAME_STORE_CART` - Store cart queue name (default: `store-cart`)

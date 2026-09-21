@@ -1,12 +1,12 @@
-// ChronoQueue Schedule API v1
+// Nzovu Schedule API v1
 //
 // This file defines scheduling structures for recurring message execution.
 // Schedules enable cron-like and calendar-based task automation.
 
 syntax = "proto3";
-package chronoqueue.api.schedule.v1;
+package nzovu.api.schedule.v1;
 
-option go_package = "github.com/adrien19/chronoqueue/api/schedule/v1;schedule";
+option go_package = "github.com/adrien19/nzovu/api/schedule/v1;schedule";
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
@@ -51,17 +51,19 @@ import "proto/message/v1/message.proto";
 // - ERRORED: Failed to execute (check state_message for details)
 message Schedule {
     // schedule_id: Unique identifier for this schedule.
-    // Must be unique across all schedules in your ChronoQueue instance.
+    // Must be unique across all schedules in your Nzovu instance.
     // Used for updating, pausing, resuming, or deleting the schedule.
     // Recommended format: descriptive-name or {system}-{task}-{frequency}
   string schedule_id = 1;
 
     // Metadata contains schedule configuration and execution state.
   message Metadata {
+    reserved 10;
+    reserved "exclusivity_key";
         // payload: Template payload for messages created by this schedule.
         // Each scheduled execution creates a new message with this payload.
         // You can include template variables that get resolved at execution time.
-    chronoqueue.api.common.v1.Payload payload = 1;
+    nzovu.api.common.v1.Payload payload = 1;
 
         // State represents the schedule lifecycle stage.
     enum State {
@@ -96,17 +98,17 @@ message Schedule {
     }
 
         // queue_name: Target queue where scheduled messages are posted.
-        // Must be an existing queue or auto-created if allowed.
+        // Must be an existing queue.
         // Messages inherit queue's retry, lease, and DLQ settings.
     string queue_name = 4;
 
-        // message_ids: IDs of messages created by this schedule (for tracking/debugging).
-        // Auto-populated by ChronoQueue. Format: "{schedule_id}-{timestamp}"
-        // Use to correlate schedule executions with processed messages.
-    repeated string message_ids = 5;
+        // message_ids: Deprecated legacy execution IDs.
+        // New executions are available through GetScheduleHistory, which retains
+        // immutable message snapshots without growing this schedule record.
+    repeated string message_ids = 5 [deprecated = true];
 
         // next_run: When this schedule will execute next.
-        // Auto-calculated by ChronoQueue based on schedule_config.
+        // Auto-calculated by Nzovu based on schedule_config.
         // Read-only from client perspective.
     google.protobuf.Timestamp next_run = 6;
 
@@ -121,11 +123,6 @@ message Schedule {
         // Updates when pausing, resuming, or changing configuration.
     google.protobuf.Timestamp updated_at = 9;
 
-        // exclusivity_key: Ensures only one instance of this schedule runs.
-        // Useful in multi-region deployments to prevent duplicate executions.
-        // Leave empty if multiple instances can run concurrently.
-    string exclusivity_key = 10;
-
         // state_message: Human-readable status or error message.
         // Contains error details when state = ERRORED.
         // Example: "Failed to post message: queue 'reports' not found"
@@ -133,7 +130,7 @@ message Schedule {
 
         // priority: Priority for messages created by this schedule.
         // Inherited by posted messages unless message specifies otherwise.
-        // Common values: 5 (high), 2 (normal), 0 (low).
+        // Values: 4 (high), 2 (normal), 0 (low).
     int64 priority = 12;
 
         // has_max_messages: If true, enforces max_messages limit.
@@ -151,16 +148,18 @@ message Schedule {
         // Useful when scheduled tasks need different processing time than queue default.
     google.protobuf.Duration lease_duration = 15;
 
-        // timezone: Timezone for calendar_schedule calculations.
-        // IANA timezone format: "America/New_York", "Europe/London", "Asia/Tokyo"
-        // Affects when "9 AM" means and handles DST transitions correctly.
-        // Must be set when using calendar_schedule.
-    string timezone = 17;
+        // Deprecated: calendar_schedule.timezone is the canonical timezone.
+        // If supplied for compatibility, it must match calendar_schedule.timezone.
+    string timezone = 17 [deprecated = true];
 
         // next_runs: Precomputed upcoming execution times (for preview/validation).
         // Populated by PreviewSchedule API or ValidateSchedule API.
         // Shows next N execution times to verify schedule behaves as expected.
     repeated google.protobuf.Timestamp next_runs = 18;
+
+        // headers: Optional ordered headers copied to every message created by
+        // this schedule. Values are opaque bytes and duplicate keys are allowed.
+    repeated nzovu.api.message.v1.Message.Metadata.Header headers = 19;
   }
 
     // metadata: Schedule configuration and execution state.
@@ -172,7 +171,7 @@ message Schedule {
 message ScheduleHistory {
     // messages: Messages created by this schedule.
     // Limited to recent history (e.g., last 100 executions).
-  repeated chronoqueue.api.message.v1.Message messages = 1;
+  repeated nzovu.api.message.v1.Message messages = 1;
 
     // schedule_id: The schedule this history belongs to.
   string schedule_id = 2;
@@ -188,6 +187,28 @@ message ScheduleHistory {
 
     // updated_at: When this schedule was last modified.
   google.protobuf.Timestamp updated_at = 6;
+
+    // executions: Durable schedule execution records. Unlike messages, these
+    // records remain available after message retention or schedule deletion.
+  repeated Execution executions = 7;
+
+  message Execution {
+        // message_id: Identifier assigned to the generated message.
+    string message_id = 1;
+
+        // executed_at: Scheduled execution time recorded by the processor.
+    google.protobuf.Timestamp executed_at = 2;
+
+        // success: Whether the schedule execution created its message.
+    bool success = 3;
+
+        // error_message: Execution failure detail when success is false.
+    string error_message = 4;
+
+        // message: Immutable snapshot of the generated message. This remains
+        // available after the live message is removed by its retention policy.
+    nzovu.api.message.v1.Message message = 5;
+  }
 }
 
 // CalendarSchedule defines rich business calendar-based scheduling.
@@ -237,7 +258,7 @@ message CalendarSchedule {
     DAILY         = 2;          // Executes daily (every day, weekdays only, etc.)
     YEARLY        = 3;         // Executes yearly (birthdays, anniversaries, annual reports)
     BUSINESS_DAYS = 4;  // Executes on business days (respects holidays/weekends)
-    CUSTOM        = 5;         // Custom logic via expression language
+    CUSTOM        = 5;         // Reserved for wire compatibility; not supported by the v2 server
   }
 
     // type: Primary scheduling pattern.
@@ -249,7 +270,7 @@ message CalendarSchedule {
     // Example: Two rules for "weekdays at 9 AM" and "weekdays at 5 PM"
   repeated CalendarRule rules = 2;
 
-    // timezone: IANA timezone for all time calculations.
+    // timezone: Canonical IANA timezone for all calendar schedule calculations.
     // Examples: "America/New_York", "Europe/London", "Asia/Tokyo"
     // Affects DST transitions, date boundaries, execution times.
     // Required for calendar schedules.
@@ -301,7 +322,7 @@ message CalendarRule {
     DailyRule        daily         = 3;                  // For DAILY schedules
     YearlyRule       yearly        = 4;                // For YEARLY schedules
     BusinessDaysRule business_days = 5;   // For BUSINESS_DAYS schedules
-    CustomRule       custom        = 6;                // For CUSTOM schedules
+    CustomRule       custom        = 6;                // Reserved for wire compatibility; not supported by the v2 server
   }
 
     // execution_times: What time(s) of day to execute on matching dates.
@@ -482,27 +503,16 @@ message BusinessDaysRule {
   int32 day_offset = 2;
 }
 
-// CustomRule allows complex scheduling logic via custom expressions.
-// Useful when built-in rules don't support your use case.
-//
-// Example - Last business day of each quarter:
-//   {
-//     expression: "last_business_day_of_quarter",
-//     rule_type: "business_calendar_expression",
-//     parameters: {"calendar_id": "us-holidays", "quarters": "1,2,3,4"}
-//   }
+// CustomRule is reserved for wire compatibility.
+// The v2 server rejects custom expression rules because it has no custom-rule processors.
 message CustomRule {
-    // expression: Custom scheduling expression.
-    // Format depends on rule_type. See ChronoQueue documentation for supported expressions.
+    // expression: Reserved custom scheduling expression.
   string expression = 1;
 
-    // rule_type: Identifies which custom rule processor to use.
-    // Built-in types: "business_calendar_expression", "lua_expression"
-    // Extensible via server plugins.
+    // rule_type: Reserved custom rule processor identifier.
   string rule_type = 2;
 
-    // parameters: Additional configuration for the rule processor.
-    // Contents depend on rule_type.
+    // parameters: Reserved custom rule parameters.
   map<string, string> parameters = 3;
 }
 

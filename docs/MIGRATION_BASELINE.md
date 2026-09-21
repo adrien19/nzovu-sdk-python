@@ -10,8 +10,9 @@ The source's untracked `demo_transaction_mode.py` remains there for later review
 Local `main` identifies that baseline. Work proceeds on migration branches;
 `origin` names the proposed `adrien19/nzovu-sdk-python` destination and `legacy`
 fetches the local source with pushing disabled. Configuring `origin` does not
-create the GitHub repository. Nothing has been committed, pushed or published
-as part of bootstrap.
+create the GitHub repository. At baseline capture, nothing had been committed,
+pushed or published as part of bootstrap. Subsequent migration progress is
+recorded in [the current status](MIGRATION_STATUS.md).
 
 ## Development environment
 

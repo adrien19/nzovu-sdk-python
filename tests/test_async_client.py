@@ -1,5 +1,5 @@
 """
-Tests for AsyncChronoqueueClient - async/await version of the client.
+Tests for AsyncNzovuClient - async/await version of the client.
 
 These tests verify that all async operations work correctly and match
 the functionality of the synchronous client.
@@ -10,25 +10,25 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from chronoqueue.async_client import AsyncChronoqueueClient
-from chronoqueue.utils import (
+from nzovu.async_client import AsyncNzovuClient
+from nzovu.utils import (
     AcknowledgeMessageParams,
+    LeasePolicyOptions,
+    MessageRetentionPolicy,
     PeekQueueMessagesParams,
     PostMessageParams,
     QueueOptions,
+    RetentionMode,
     ScheduleOptions,
     SchemaOptions,
-    LeasePolicyOptions,
-    MessageRetentionPolicy,
-    RetentionMode,
     TransactionMode,
 )
 
 
 @pytest.fixture
 async def async_client():
-    """Create an AsyncChronoqueueClient instance for testing."""
-    client = AsyncChronoqueueClient(
+    """Create an AsyncNzovuClient instance for testing."""
+    client = AsyncNzovuClient(
         host="localhost",
         port=50051,
         use_tls=False,
@@ -44,7 +44,7 @@ async def async_client():
 @pytest.mark.asyncio
 async def test_async_client_initialization():
     """Test async client can be initialized without TLS."""
-    client = AsyncChronoqueueClient(
+    client = AsyncNzovuClient(
         host="localhost",
         port=50051,
         use_tls=False,
@@ -59,9 +59,9 @@ async def test_async_client_initialization():
 @pytest.mark.asyncio
 async def test_async_client_context_manager():
     """Test async client works as an async context manager."""
-    async with AsyncChronoqueueClient(host="localhost", port=50051, use_tls=False) as client:
+    async with AsyncNzovuClient(host="localhost", port=50051, use_tls=False) as client:
         assert client is not None
-        assert isinstance(client, AsyncChronoqueueClient)
+        assert isinstance(client, AsyncNzovuClient)
 
 
 @pytest.mark.asyncio
@@ -86,15 +86,12 @@ async def test_create_queue_success(async_client):
 @pytest.mark.asyncio
 async def test_create_queue_with_retention_duration(async_client):
     """Test create_queue passes retention_policy to the proto request."""
-    from chronoqueue.api.queueservice.v1 import request_response_pb2
 
     async_client.stub = AsyncMock()
     async_client.stub.CreateQueue = AsyncMock(return_value=MagicMock())
 
     options = QueueOptions(
-        retention_policy=MessageRetentionPolicy(
-            mode=RetentionMode.RETAIN_DURATION, retention_seconds=86400
-        )
+        retention_policy=MessageRetentionPolicy(mode=RetentionMode.RETAIN_DURATION, retention_seconds=86400)
     )
     await async_client.create_queue("test_queue", options)
 
@@ -233,7 +230,7 @@ async def test_peek_queue_messages_success(async_client):
 
     params = PeekQueueMessagesParams(
         queue_name="test_queue",
-        limit=10,
+        page_size=10,
         priority_range=None,
     )
 
@@ -245,14 +242,14 @@ async def test_peek_queue_messages_success(async_client):
 @pytest.mark.asyncio
 async def test_peek_queue_messages_with_priority_range(async_client):
     """Test peek_queue_messages passes priority_range as proto type."""
-    from chronoqueue.utils import MessagePriorityRange
+    from nzovu.utils import MessagePriorityRange
 
     async_client.stub = AsyncMock()
     async_client.stub.PeekQueueMessages = AsyncMock(return_value=MagicMock())
 
     params = PeekQueueMessagesParams(
         queue_name="test_queue",
-        limit=10,
+        page_size=10,
         priority_range=MessagePriorityRange(min=1, max=3),
     )
     await async_client.peek_queue_messages(params)
@@ -347,7 +344,7 @@ async def test_get_schedule_history_success(async_client):
     mock_response = MagicMock()
     async_client.stub.GetScheduleHistory = AsyncMock(return_value=mock_response)
 
-    response = await async_client.get_schedule_history("schedule123", limit=20)
+    response = await async_client.get_schedule_history("schedule123", page_size=20)
     assert response is not None
     async_client.stub.GetScheduleHistory.assert_called_once()
 
@@ -414,7 +411,7 @@ async def test_list_schemas_success(async_client):
     mock_response = MagicMock()
     async_client.stub.ListSchemas = AsyncMock(return_value=mock_response)
 
-    response = await async_client.list_schemas(prefix="test_", limit=50)
+    response = await async_client.list_schemas(prefix="test_", page_size=50)
     assert response is not None
     async_client.stub.ListSchemas.assert_called_once()
 
@@ -451,7 +448,7 @@ async def test_get_dlq_messages_success(async_client):
     mock_response = MagicMock()
     async_client.stub.GetDLQMessages = AsyncMock(return_value=mock_response)
 
-    response = await async_client.get_dlq_messages("test_dlq", limit=50)
+    response = await async_client.get_dlq_messages("test_dlq", page_size=50)
     assert response is not None
     async_client.stub.GetDLQMessages.assert_called_once()
 
@@ -571,7 +568,7 @@ async def test_cancel_message_without_reason(async_client):
 @pytest.mark.asyncio
 async def test_post_messages_bulk_all_or_nothing(async_client):
     """Test post_messages_bulk with ALL_OR_NOTHING transaction mode."""
-    from chronoqueue.api.queueservice.v1 import request_response_pb2
+    from nzovu.api.queueservice.v1 import request_response_pb2
 
     async_client.stub = AsyncMock()
     mock_response = MagicMock()
@@ -605,7 +602,7 @@ async def test_post_messages_bulk_all_or_nothing(async_client):
 @pytest.mark.asyncio
 async def test_post_messages_bulk_best_effort(async_client):
     """Test post_messages_bulk with BEST_EFFORT transaction mode."""
-    from chronoqueue.api.queueservice.v1 import request_response_pb2
+    from nzovu.api.queueservice.v1 import request_response_pb2
 
     async_client.stub = AsyncMock()
     mock_response = MagicMock()
@@ -639,7 +636,7 @@ async def test_post_messages_bulk_best_effort(async_client):
 @pytest.mark.asyncio
 async def test_post_messages_bulk_invalid_transaction_mode(async_client):
     """Test post_messages_bulk with invalid transaction mode."""
-    from chronoqueue.exceptions import RpcOperationError
+    from nzovu.exceptions import RpcOperationError
 
     async_client.stub = AsyncMock()
 
@@ -673,7 +670,7 @@ async def test_post_messages_bulk_empty_list(async_client):
 @pytest.mark.asyncio
 async def test_post_messages_bulk_with_enum_all_or_nothing(async_client):
     """Test post_messages_bulk with TransactionMode enum (ALL_OR_NOTHING)."""
-    from chronoqueue.api.queueservice.v1 import request_response_pb2
+    from nzovu.api.queueservice.v1 import request_response_pb2
 
     async_client.stub = AsyncMock()
     mock_response = MagicMock()
@@ -688,7 +685,9 @@ async def test_post_messages_bulk_with_enum_all_or_nothing(async_client):
     ]
 
     # Use enum instead of string
-    response = await async_client.post_messages_bulk("test_queue", messages, transaction_mode=TransactionMode.ALL_OR_NOTHING)
+    response = await async_client.post_messages_bulk(
+        "test_queue", messages, transaction_mode=TransactionMode.ALL_OR_NOTHING
+    )
 
     assert response is not None
     async_client.stub.PostMessagesBulk.assert_called_once()
@@ -702,7 +701,7 @@ async def test_post_messages_bulk_with_enum_all_or_nothing(async_client):
 @pytest.mark.asyncio
 async def test_post_messages_bulk_with_enum_best_effort(async_client):
     """Test post_messages_bulk with TransactionMode enum (BEST_EFFORT)."""
-    from chronoqueue.api.queueservice.v1 import request_response_pb2
+    from nzovu.api.queueservice.v1 import request_response_pb2
 
     async_client.stub = AsyncMock()
     mock_response = MagicMock()
@@ -717,7 +716,9 @@ async def test_post_messages_bulk_with_enum_best_effort(async_client):
     ]
 
     # Use enum instead of string
-    response = await async_client.post_messages_bulk("test_queue", messages, transaction_mode=TransactionMode.BEST_EFFORT)
+    response = await async_client.post_messages_bulk(
+        "test_queue", messages, transaction_mode=TransactionMode.BEST_EFFORT
+    )
 
     assert response is not None
     async_client.stub.PostMessagesBulk.assert_called_once()

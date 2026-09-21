@@ -1,13 +1,13 @@
 """
-Unit tests for DLQ operations in ChronoqueueClient.
+Unit tests for DLQ operations in NzovuClient.
 """
 
 import unittest
 from unittest.mock import MagicMock, patch
 
-from chronoqueue.api.message.v1 import message_pb2
-from chronoqueue.api.queueservice.v1 import request_response_pb2
-from chronoqueue.client import ChronoqueueClient
+from nzovu.api.message.v1 import message_pb2
+from nzovu.api.queueservice.v1 import request_response_pb2
+from nzovu.client import NzovuClient
 
 
 class TestDLQOperations(unittest.TestCase):
@@ -16,12 +16,12 @@ class TestDLQOperations(unittest.TestCase):
     def setUp(self):
         """Set up test fixtures."""
         self.mock_stub = MagicMock()
-        with patch("chronoqueue.client.service_pb2_grpc.QueueServiceStub", return_value=self.mock_stub):
-            with patch("chronoqueue.client.grpc.insecure_channel"):
-                self.client = ChronoqueueClient(host="localhost", port=50051, use_tls=False)
+        with patch("nzovu.client.service_pb2_grpc.QueueServiceStub", return_value=self.mock_stub):
+            with patch("nzovu.client.grpc.insecure_channel"):
+                self.client = NzovuClient(host="localhost", port=50051, use_tls=False)
 
     def test_get_dlq_messages_default_limit(self):
-        """Test getting DLQ messages with default limit."""
+        """Test getting DLQ messages with default page_size."""
         mock_response = request_response_pb2.GetDLQMessagesResponse(messages=[])
         self.mock_stub.GetDLQMessages.return_value = mock_response
 
@@ -30,18 +30,18 @@ class TestDLQOperations(unittest.TestCase):
         self.mock_stub.GetDLQMessages.assert_called_once()
         call_args = self.mock_stub.GetDLQMessages.call_args[0][0]
         self.assertEqual(call_args.dlq_name, "orders_queue_dlq")
-        self.assertEqual(call_args.limit, 100)
+        self.assertEqual(call_args.page_size, 100)
 
     def test_get_dlq_messages_custom_limit(self):
-        """Test getting DLQ messages with custom limit."""
+        """Test getting DLQ messages with custom page_size."""
         mock_message = message_pb2.Message(message_id="msg-123")
         mock_response = request_response_pb2.GetDLQMessagesResponse(messages=[mock_message])
         self.mock_stub.GetDLQMessages.return_value = mock_response
 
-        result = self.client.get_dlq_messages("orders_queue_dlq", limit=50)
+        result = self.client.get_dlq_messages("orders_queue_dlq", page_size=50)
 
         call_args = self.mock_stub.GetDLQMessages.call_args[0][0]
-        self.assertEqual(call_args.limit, 50)
+        self.assertEqual(call_args.page_size, 50)
         self.assertIsNotNone(result)
 
     def test_requeue_from_dlq_to_original(self):

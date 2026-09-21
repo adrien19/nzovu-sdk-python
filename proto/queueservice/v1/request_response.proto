@@ -1,4 +1,4 @@
-// ChronoQueue Service Request/Response Messages v1
+// Nzovu Service Request/Response Messages v1
 //
 // This file defines all request and response message types for QueueService RPCs.
 // Each RPC in service.proto has a corresponding request and response message here.
@@ -47,12 +47,13 @@
 
 syntax = "proto3";
 
-package chronoqueue.api.queueservice.v1;
+package nzovu.api.queueservice.v1;
 
-option go_package = "github.com/adrien19/chronoqueue/api/queueservice/v1;queueservice";
+option go_package = "github.com/adrien19/nzovu/api/queueservice/v1;queueservice";
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
+import "proto/google/api/field_behavior.proto";
 
 import "proto/queue/v1/queue.proto";
 import "proto/message/v1/message.proto";
@@ -62,7 +63,7 @@ import "proto/schema/v1/schema.proto";
 // Create queue
 message CreateQueueRequest {
   string                                          name     = 1;
-  optional chronoqueue.api.queue.v1.QueueMetadata metadata = 2;
+  optional nzovu.api.queue.v1.QueueMetadata metadata = 2;
 }
 
 message CreateQueueResponse {
@@ -81,7 +82,7 @@ message DeleteQueueResponse {
 // Post a message to the queue
 message PostMessageRequest{
   string                             queue_name = 1;
-  chronoqueue.api.message.v1.Message message    = 2;
+  nzovu.api.message.v1.Message message    = 2;
 }
 
 message PostMessageResponse{
@@ -93,7 +94,7 @@ message PostMessagesBulkRequest {
   string queue_name = 1;
 
   // Messages to post (recommended max: 1000 per request)
-  repeated chronoqueue.api.message.v1.Message messages = 2;
+  repeated nzovu.api.message.v1.Message messages = 2;
 
   // Transaction mode for batch processing
   enum TransactionMode {
@@ -140,7 +141,8 @@ message PostMessagesBulkResponse {
       DUPLICATE_MESSAGE_ID = 2;
       SCHEMA_MISMATCH      = 3;
       INTERNAL_ERROR       = 4;
-      QUEUE_NOT_FOUND      = 5;
+      // Queue lookup failures are RPC-level errors because all items target queue_name.
+      QUEUE_NOT_FOUND      = 5 [deprecated = true];
     }
     ErrorCode error_code = 4;
   }
@@ -150,6 +152,7 @@ message PostMessagesBulkResponse {
 message GetNextMessageRequest{
   string                   queue_name      = 1;
   google.protobuf.Duration lease_duration  = 2;
+    // Required for EXCLUSIVE queues; must match the queue's configured key.
   string                   exclusivity_key = 3;
     // Optional stable identifier for the worker/consumer. If absent, server may generate one.
   optional string worker_id = 4;
@@ -158,7 +161,7 @@ message GetNextMessageRequest{
 }
 
 message GetNextMessageResponse{
-  chronoqueue.api.message.v1.Message message = 1;
+  nzovu.api.message.v1.Message message = 1;
     // Echo or assign the worker_id used for this lease
   optional string worker_id = 2;
     // Attempt identifier for this lease
@@ -169,10 +172,10 @@ message GetNextMessageResponse{
 message AcknowledgeMessageRequest{
   string                                            queue_name = 1;
   string                                            message_id = 2;
-  chronoqueue.api.message.v1.Message.Metadata.State state      = 3;
-    // Optional stable identifier to consistently represent the same consumer
+  nzovu.api.message.v1.Message.Metadata.State state      = 3;
+    // Required worker identifier returned by GetNextMessage.
   optional string worker_id = 4;
-    // Attempt identifier to validate acknowledgment against current attempt
+    // Required attempt identifier returned by GetNextMessage.
   optional string attempt_id = 5;
 }
 
@@ -197,26 +200,32 @@ message RenewMessageLeaseRequest{
   string                   queue_name     = 1;
   string                   message_id     = 2;
   google.protobuf.Duration lease_duration = 3;
+    // Required worker identifier returned by GetNextMessage.
+  optional string worker_id = 4;
+    // Required attempt identifier returned by GetNextMessage.
+  optional string attempt_id = 5;
 }
 
 message RenewMessageLeaseResponse{
   google.protobuf.Duration                          remaining_time = 1;
-  chronoqueue.api.message.v1.Message.Metadata.State state          = 2;
+  nzovu.api.message.v1.Message.Metadata.State state          = 2;
 }
 
 // View pending messages on a queueu
 message PeekQueueMessagesRequest{
   string queue_name = 1;
-  int64  limit      = 2;
+  int32  page_size  = 2; // 0 uses the default of 100; maximum is 1000.
   message PriorityRange {
     int64 min = 1;
     int64 max = 2;
   }
   optional PeekQueueMessagesRequest.PriorityRange priority_range = 3;
+  string page_token = 4;
 }
 
 message PeekQueueMessagesResponse{
-  repeated chronoqueue.api.message.v1.Message messages = 1;
+  repeated nzovu.api.message.v1.Message messages = 1;
+  string next_page_token = 2;
 }
 
 // vew the state of a given queue
@@ -225,7 +234,7 @@ message GetQueueStateRequest{
 }
 
 message GetQueueStateResponse{
-  map<string, int32>        state_counts      = 1;
+  map<string, int64>        state_counts      = 1;
   google.protobuf.Timestamp earliest_deadline = 2;
 }
 
@@ -233,29 +242,32 @@ message GetQueueStateResponse{
 message SendMessageHeartBeatRequest {
   string queue_name = 1;
   string message_id = 2;
-    // Optional stable identifier to consistently represent the same consumer
+    // Required worker identifier returned by GetNextMessage.
   optional string worker_id = 3;
-    // Attempt identifier to validate heartbeat against current attempt
+    // Required attempt identifier returned by GetNextMessage.
   optional string attempt_id = 4;
 }
 
 message SendMessageHeartBeatResponse {
   google.protobuf.Duration                          remaining_time = 1;
-  chronoqueue.api.message.v1.Message.Metadata.State state          = 2;
+  nzovu.api.message.v1.Message.Metadata.State state          = 2;
 }
 
 // List queues
 message ListQueuesRequest {
   string prefix = 1;
+  int32 page_size = 2; // 0 uses the default of 100; maximum is 1000.
+  string page_token = 3;
 }
 
 message ListQueuesResponse {
-  repeated chronoqueue.api.queue.v1.Queue queues = 1;
+  repeated nzovu.api.queue.v1.Queue queues = 1;
+  string next_page_token = 2;
 }
 
 // Create a schedule
 message CreateScheduleRequest {
-  chronoqueue.api.schedule.v1.Schedule schedule = 1;
+  nzovu.api.schedule.v1.Schedule schedule = 1;
 }
 
 message CreateScheduleResponse {
@@ -295,26 +307,31 @@ message GetScheduleRequest {
 }
 
 message GetScheduleResponse {
-  chronoqueue.api.schedule.v1.Schedule schedule = 1;
+  nzovu.api.schedule.v1.Schedule schedule = 1;
 }
 
 // List schedules
 message ListSchedulesRequest {
   string prefix = 1;
+  int32 page_size = 2; // 0 uses the default of 100; maximum is 1000.
+  string page_token = 3;
 }
 
 message ListSchedulesResponse {
-  repeated chronoqueue.api.schedule.v1.Schedule schedules = 1;
+  repeated nzovu.api.schedule.v1.Schedule schedules = 1;
+  string next_page_token = 2;
 }
 
 // Get schedule history
 message GetScheduleHistoryRequest {
   string schedule_id = 1;
-  int64  limit       = 2;
+  int32  page_size   = 2; // 0 uses the default of 100; maximum is 1000.
+  string page_token  = 3;
 }
 
 message GetScheduleHistoryResponse {
-  chronoqueue.api.schedule.v1.ScheduleHistory schedule_history = 1;
+  nzovu.api.schedule.v1.ScheduleHistory schedule_history = 1;
+  string next_page_token = 2;
 }
 
 // Dead Letter Queue Management Operations
@@ -322,18 +339,21 @@ message GetScheduleHistoryResponse {
 // Get messages from DLQ
 message GetDLQMessagesRequest {
   string dlq_name = 1;
-  int32  limit    = 2;
+  int32  page_size = 2; // 0 uses the default of 100; maximum is 1000.
+  string page_token = 3;
 }
 
 message GetDLQMessagesResponse {
-  repeated chronoqueue.api.message.v1.Message messages = 1;
+  repeated nzovu.api.message.v1.Message messages = 1;
+  string next_page_token = 2;
 }
 
-// Requeue message from DLQ back to original queue
+// Requeue message from a DLQ to a required target queue.
 message RequeueFromDLQRequest {
   string dlq_name     = 1;
   string message_id   = 2;
-  string target_queue = 3;
+  // Existing queue that will receive the requeued message.
+  string target_queue = 3 [(google.api.field_behavior) = REQUIRED];
 }
 
 message RequeueFromDLQResponse {
@@ -375,7 +395,7 @@ message GetDLQStatsResponse {
 
 // Validate a calendar schedule configuration
 message ValidateCalendarScheduleRequest {
-  chronoqueue.api.schedule.v1.CalendarSchedule calendar_schedule = 1;
+  nzovu.api.schedule.v1.CalendarSchedule calendar_schedule = 1;
 }
 
 message ValidateCalendarScheduleResponse {
@@ -386,7 +406,7 @@ message ValidateCalendarScheduleResponse {
 
 // Preview upcoming execution times for a calendar schedule
 message PreviewCalendarScheduleRequest {
-  chronoqueue.api.schedule.v1.CalendarSchedule calendar_schedule = 1;
+  nzovu.api.schedule.v1.CalendarSchedule calendar_schedule = 1;
   int32                                        count             = 2; // Number of execution times to preview (default: 10, max: 100)
 }
 
@@ -431,26 +451,29 @@ message GetSchemaRequest {
 }
 
 message GetSchemaResponse {
-  chronoqueue.api.schema.v1.Schema schema = 1; // Full schema object
+  nzovu.api.schema.v1.Schema schema = 1; // Full schema object
 }
 
-// List schemas with optional filtering
+// List schema families with optional filtering.
+// Each family contributes at most one summary for its latest matching version.
 message ListSchemasRequest {
   string prefix      = 1; // Filter by schema_id prefix
-  int32  limit       = 2; // Maximum number of results (default: 100)
+  int32  page_size   = 2; // 0 uses the default of 100; maximum is 1000.
   bool   active_only = 3; // Only return active schemas
+  string page_token  = 4;
 }
 
 message ListSchemasResponse {
   repeated SchemaInfo schemas     = 1;
-  int32               total_count = 2;
+  int32               total_count = 2; // Number of matching schema families, not versions.
+  string               next_page_token = 3;
 }
 
-// Schema information for list responses
-// Note: This is a summary view with aggregated version info, different from schema.v1.Schema
+// Schema information for list responses.
+// This is one family summary with aggregated version info, not a schema version list.
 message SchemaInfo {
   string schema_id      = 1;
-  int32  latest_version = 2; // Latest version number
+  int32  latest_version = 2; // Latest version matching the request's active filter.
   string name           = 3;
   string description    = 4;
   int64  created_at     = 5;
@@ -459,15 +482,15 @@ message SchemaInfo {
   bool   is_active      = 8;
 }
 
-// Delete a schema or specific version
+// Deactivate a schema or specific version. Inactive schemas remain available by ID and version.
 message DeleteSchemaRequest {
   string schema_id = 1; // Schema identifier
-  int32  version   = 2; // Schema version (0 = delete all versions)
+  int32  version   = 2; // Schema version (0 = deactivate all versions)
 }
 
 message DeleteSchemaResponse {
   bool  success          = 1;
-  int32 versions_deleted = 2; // Number of versions deleted
+  int32 versions_deleted = 2; // Number of versions deactivated
 }
 
 // Validate a payload against a schema
@@ -479,7 +502,7 @@ message ValidatePayloadRequest {
 
 message ValidatePayloadResponse {
   bool                                               valid          = 1;
-  repeated chronoqueue.api.schema.v1.ValidationError errors         = 2; // Validation errors from schema.proto
+  repeated nzovu.api.schema.v1.ValidationError errors         = 2; // Validation errors from schema.proto
   string                                             schema_id      = 3;
   int32                                              schema_version = 4;
 }

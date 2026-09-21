@@ -3,8 +3,8 @@ import logging
 import time
 from uuid import uuid4
 
-from chronoqueue.client import ChronoqueueClient
-from chronoqueue.utils import (
+from nzovu.client import NzovuClient
+from nzovu.utils import (
     AcknowledgeMessageParams,
     MessageState,
     PostMessageOptions,
@@ -22,7 +22,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-async def process_store_cart(client: ChronoqueueClient):
+async def process_store_cart(client: NzovuClient):
     """
     Process messages from store-cart queue.
 
@@ -133,7 +133,7 @@ async def process_store_cart(client: ChronoqueueClient):
         await asyncio.sleep(1)  # Sleep for a bit before fetching the next message
 
 
-async def process_checkout_cart(client: ChronoqueueClient):
+async def process_checkout_cart(client: NzovuClient):
     """
     Process messages from checkout-cart queue.
 
