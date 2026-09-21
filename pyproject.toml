@@ -1,11 +1,13 @@
 
 [tool.poetry]
-name = "chronoqueue"
-version = "0.2.4"
-description = "Python SDK for interacting with the Chronoqueue service"
+name = "nzovu"
+version = "0.0.1.dev0"
+description = "Python SDK for interacting with the Nzovu service"
 authors = ["Adrien <n.adrien@mun.ca>"]
 license = "MIT"
 readme = "README.md"
+packages = [{include = "nzovu"}]
+include = [{path = "proto", format = "sdist"}, {path = "scripts", format = "sdist"}]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -17,20 +19,20 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14"
 ]
-keywords = ["chronoqueue", "grpc", "sdk"]
+keywords = ["nzovu", "grpc", "sdk"]
 
 [tool.poetry.dependencies]
 python = "^3.10"
-grpcio = "^1.71.2"
-protobuf = "^5.29.0"
+grpcio = "^1.76.0"
+protobuf = "^5.29.5"
 pydantic = {version = "^2.0", optional = true}
 
 [tool.poetry.extras]
 pydantic = ["pydantic"]
 
 [tool.poetry.group.dev.dependencies]
-grpcio-tools = "^1.71.2"
-mypy-protobuf = "^3.5.0"
+grpcio-tools = "1.71.2"
+mypy-protobuf = "3.7.0"
 pytest = "^7.0.0"
 pytest-cov = "^4.0.0"
 pytest-asyncio = "^0.21.0"
@@ -43,12 +45,12 @@ pydantic = "^2.0"
 
 
 [tool.poetry.urls]
-Source = "https://github.com/adrien19/chronoqueue_sdk"
-Tracker = "https://github.com/adrien19/chronoqueue_sdk/issues"
+Source = "https://github.com/adrien19/nzovu-sdk-python"
+Tracker = "https://github.com/adrien19/nzovu-sdk-python/issues"
 
 [build-system]
 build-backend = "poetry.core.masonry.api"
-requires = ["poetry-core>=1.0.0"]
+requires = ["poetry-core==2.3.0"]
 
 [tool.black]
 line-length = 120
@@ -64,15 +66,15 @@ exclude = '''
   | __pycache__
   | build
   | dist
-  | chronoqueue/api/v1
+  | nzovu/api
 )/
 '''
 
 [tool.isort]
 profile = "black"
 line_length = 120
-skip_glob = ["chronoqueue/api/v1/*.py"]
-known_first_party = ["chronoqueue"]
+skip_glob = ["nzovu/api/**"]
+known_first_party = ["nzovu"]
 
 [tool.mypy]
 python_version = "3.10"
@@ -82,26 +84,26 @@ disallow_untyped_defs = false
 ignore_missing_imports = true
 no_implicit_optional = true
 exclude = [
-    "chronoqueue/api/v1/",
-    "chronoqueue/api/common/",
-    "chronoqueue/api/google/",
-    "chronoqueue/api/message/",
-    "chronoqueue/api/queue/",
-    "chronoqueue/api/queueservice/",
-    "chronoqueue/api/schedule/",
-    "chronoqueue/api/schema/",
+    "nzovu/api/v1/",
+    "nzovu/api/common/",
+    "nzovu/api/google/",
+    "nzovu/api/message/",
+    "nzovu/api/queue/",
+    "nzovu/api/queueservice/",
+    "nzovu/api/schedule/",
+    "nzovu/api/schema/",
 ]
 
 # Ignore all errors from generated protobuf code
 [[tool.mypy.overrides]]
 module = [
-    "chronoqueue.api.common.*",
-    "chronoqueue.api.google.*",
-    "chronoqueue.api.message.*",
-    "chronoqueue.api.queue.*",
-    "chronoqueue.api.queueservice.*",
-    "chronoqueue.api.schedule.*",
-    "chronoqueue.api.schema.*",
+    "nzovu.api.common.*",
+    "nzovu.api.google.*",
+    "nzovu.api.message.*",
+    "nzovu.api.queue.*",
+    "nzovu.api.queueservice.*",
+    "nzovu.api.schedule.*",
+    "nzovu.api.schema.*",
 ]
 follow_imports = "skip"
 ignore_errors = true
@@ -119,10 +121,10 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["chronoqueue"]
+source = ["nzovu"]
 omit = [
     "*/tests/*",
-    "*/chronoqueue/api/v1/*",
+    "*/nzovu/api/*",
 ]
 
 [tool.coverage.report]

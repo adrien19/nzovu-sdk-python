@@ -4,12 +4,12 @@ Unit tests for schema Pydantic models.
 
 import unittest
 
-from chronoqueue.api.queueservice.v1 import request_response_pb2
-from chronoqueue.api.schema.v1 import schema_pb2
+from nzovu.api.queueservice.v1 import request_response_pb2
+from nzovu.api.schema.v1 import schema_pb2
 
 # SchemaInfo is in request_response_pb2
 # ValidationError is in schema_pb2
-from chronoqueue.models import (
+from nzovu.models import (
     DeleteSchemaResponse,
     GetSchemaResponse,
     ListSchemasResponse,
@@ -19,7 +19,7 @@ from chronoqueue.models import (
     ValidatePayloadResponse,
     ValidationError,
 )
-from chronoqueue.utils import ResponseWrapper
+from nzovu.utils import ResponseWrapper
 
 
 class TestSchemaModels(unittest.TestCase):

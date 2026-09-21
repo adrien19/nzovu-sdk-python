@@ -1,0 +1,16 @@
+{
+  "repository": "https://github.com/adrien19/nzovu",
+  "commit": "f21477ecab47197f0c8c92dbdde2aab11ef02600",
+  "files": {
+    "proto/common/v1/common.proto": "7224012049d628340c73c5da6f13511ca50bafc1d5cd312cfed5e34af9869534",
+    "proto/google/api/annotations.proto": "acfefd6eafec3de02c1fd7afb906c3f69bc83b399a2df3ed994b6a804140dbcb",
+    "proto/google/api/field_behavior.proto": "044ba7fc05bdd16182be29348794ba155919c3b77d6fe492ec63b9eeae9a2c5c",
+    "proto/google/api/http.proto": "4a4d9be6a5c7f1989c93c25c71b48ff1b401645790b8b978ad34d579e29c4a2a",
+    "proto/message/v1/message.proto": "63a940b20199096c8aad8556597ec7fd9a6bf3c16c8a56da832f995b7a6e2661",
+    "proto/queue/v1/queue.proto": "5d7442decbfc20704f36643e5b2daddc506ec9c1e03c3cc0daf0bf33acaa4b83",
+    "proto/queueservice/v1/request_response.proto": "5163012e4a7062ef6a140352d78bece052a649717cb1c3961274ef36a8a99655",
+    "proto/queueservice/v1/service.proto": "fbe251987b339f4e12cd15271cfb50bc356f44a51bbd4b3de31bb24e94f1b152",
+    "proto/schedule/v1/schedule.proto": "5bde0811119a85fb8d0b433455944a8578fbfb112c72227de1063664f47d2218",
+    "proto/schema/v1/schema.proto": "5263d440763ef6cdab32ec94283294c75d44f24afc1ab1a2278411e4e901b6ec"
+  }
+}

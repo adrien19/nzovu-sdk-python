@@ -1,8 +1,8 @@
 
 services:
-  chronoqueuesvc:
-    container_name: chronoqueue_container
-    image: ghcr.io/adrien19/chronoqueue:latest
+  nzovusvc:
+    container_name: nzovu_container
+    image: ghcr.io/adrien19/nzovu:latest
     # env_file: .env
     environment:
       - SERVER_MODE=development
@@ -14,7 +14,7 @@ services:
       - SERVER_CERT_PATH=/secrets/server.crt
       - SERVER_KEY_PATH=/secrets/server.key
       - CA_CERT_PATH=/secrets/ca.crt
-      - CHRONOQUEUE_TLS_ENABLED=false
+      - NZOVU_TLS_ENABLED=false
       - ENABLE_ENCRYPTION=false
       - ENCRYPTION_KEY_SOURCE_TYPE=LOCAL
       - ENCRYPTION_KEY=0123456789abcdef0123456789abcdef
@@ -23,7 +23,7 @@ services:
     depends_on:
       - cachesvc
     networks:
-      - chronoqueue_network
+      - nzovu_network
     # volumes:
     #   - ../certs:/secrets
     ports:
@@ -39,14 +39,14 @@ services:
       - '7379:6379'
       - '8001:8001'
     networks:
-      - chronoqueue_network
+      - nzovu_network
     # volumes: 
     #   - cachesvc:/data
     restart: unless-stopped
 
 networks:
-  chronoqueue_network:
-    name: chronoqueue_network
+  nzovu_network:
+    name: nzovu_network
     driver: bridge
 
 # volumes:

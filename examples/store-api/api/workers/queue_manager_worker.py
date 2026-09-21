@@ -1,13 +1,13 @@
 import logging
-from chronoqueue.client import ChronoqueueClient
-from chronoqueue.utils import QueueOptions, QueueType, LeasePolicyOptions, MessageRetentionPolicy, RetentionMode
+from nzovu.client import NzovuClient
+from nzovu.utils import QueueOptions, QueueType, LeasePolicyOptions, MessageRetentionPolicy, RetentionMode
 from config.settings import QUEUE_NAME_STORE_CART, QUEUE_NAME_CHECKOUT_CART, CHECKOUT_QUEUE_EXCLUSIVE_KEY
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
 
 
-async def create_store_cart_queue(client: ChronoqueueClient):
+async def create_store_cart_queue(client: NzovuClient):
     try:
         queue_options = QueueOptions(
             type=QueueType.SIMPLE,
@@ -32,7 +32,7 @@ async def create_store_cart_queue(client: ChronoqueueClient):
         logging.error(f"===== STORE ERROR: occurred in create_store_cart_queue: {e} ==== ")
 
 
-async def create_checkout_cart_queue(client: ChronoqueueClient):
+async def create_checkout_cart_queue(client: NzovuClient):
     try:
         queue_options = QueueOptions(
             type=QueueType.EXCLUSIVE,

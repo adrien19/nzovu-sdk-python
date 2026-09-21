@@ -11,10 +11,10 @@ Tests verify that:
 import pytest
 from google.protobuf.struct_pb2 import Struct
 
-from chronoqueue.api.common.v1 import common_pb2
-from chronoqueue.api.message.v1 import message_pb2
-from chronoqueue.api.queueservice.v1 import request_response_pb2
-from chronoqueue.models import (
+from nzovu.api.common.v1 import common_pb2
+from nzovu.api.message.v1 import message_pb2
+from nzovu.api.queueservice.v1 import request_response_pb2
+from nzovu.models import (
     PYDANTIC_AVAILABLE,
     AcknowledgeMessageResponse,
     CreateQueueResponse,
@@ -26,7 +26,7 @@ from chronoqueue.models import (
     PeekQueueMessagesResponse,
     PostMessageResponse,
 )
-from chronoqueue.utils import ResponseWrapper
+from nzovu.utils import ResponseWrapper
 
 
 @pytest.mark.skipif(not PYDANTIC_AVAILABLE, reason="Pydantic not installed")

@@ -5,14 +5,14 @@ Review these instructions and surrounding code before implementation. Follow est
 ## Repository and migration
 
 - This is an independent SDK repository with default branch `main`. Work on feature branches and use pull requests.
-- SDK-PR0 preserves the source SDK's `chronoqueue/` package and proto snapshot as a baseline. SDK-PR1 migrates package identity and generation; later PRs align client contracts.
+- Package identity and generated protocols are migrated in SDK-PR1; later PRs align high-level client contracts. See `docs/MIGRATION_STATUS.md`.
 - Never commit, tag, push or publish without the user's authorization. Publishing remains disabled until SDK-PR5.
 - Keep the MIT license and source attribution. Do not copy untracked files from the source checkout without reviewing their inclusion.
 
 ## Structure
 
-- `chronoqueue/`: synchronous/asynchronous clients, request helpers and optional Pydantic models (renamed in SDK-PR1).
-- `chronoqueue/api/`: generated protobuf modules; do not edit manually.
+- `nzovu/`: synchronous/asynchronous clients, request helpers and optional Pydantic models.
+- `nzovu/api/`: generated protobuf modules; do not edit manually.
 - `proto/`: vendored protocol definitions.
 - `tests/`: pytest tests; `examples/store-api/`: separate example project.
 - `pyproject.toml` and `poetry.lock`: SDK dependencies and reproducible development environment.

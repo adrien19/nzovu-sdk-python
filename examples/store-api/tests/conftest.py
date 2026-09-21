@@ -3,8 +3,8 @@ from unittest.mock import Mock
 
 
 @pytest.fixture(scope="session")
-def mock_chronoqueue_client():
-    """Session-scoped mock ChronoQueue client."""
+def mock_nzovu_client():
+    """Session-scoped mock Nzovu client."""
     client = Mock()
 
     # Mock common methods

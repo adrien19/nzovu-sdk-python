@@ -9,13 +9,13 @@ exclude =
     *.egg,
     dist,
     build,
-    chronoqueue/api/common,
-    chronoqueue/api/google,
-    chronoqueue/api/message,
-    chronoqueue/api/queue,
-    chronoqueue/api/queueservice,
-    chronoqueue/api/schedule,
-    chronoqueue/api/schema
+    nzovu/api/common,
+    nzovu/api/google,
+    nzovu/api/message,
+    nzovu/api/queue,
+    nzovu/api/queueservice,
+    nzovu/api/schedule,
+    nzovu/api/schema
 ignore =
     E203,
     E266,

@@ -1,7 +1,7 @@
 """
 Async Worker for processing store cart messages.
 
-This worker demonstrates the AsyncChronoqueueClient with:
+This worker demonstrates the AsyncNzovuClient with:
 - Non-blocking message processing using async/await
 - Asyncio-based heartbeat management
 - Full async context manager support
@@ -10,9 +10,9 @@ This worker demonstrates the AsyncChronoqueueClient with:
 
 import asyncio
 import logging
-from chronoqueue.async_client import AsyncChronoqueueClient
+from nzovu.async_client import AsyncNzovuClient
 from config.settings import QUEUE_NAME_STORE_CART, QUEUE_NAME_CHECKOUT_CART, CHECKOUT_QUEUE_EXCLUSIVE_KEY
-from chronoqueue.utils import (
+from nzovu.utils import (
     AcknowledgeMessageParams,
     MessageState,
     PostMessageOptions,
@@ -22,7 +22,7 @@ from chronoqueue.utils import (
 logger = logging.getLogger(__name__)
 
 
-async def process_store_cart_async(async_client: AsyncChronoqueueClient):
+async def process_store_cart_async(async_client: AsyncNzovuClient):
     """
     Async worker that processes 'store-cart' messages with heartbeat support.
 
@@ -66,7 +66,7 @@ async def process_store_cart_async(async_client: AsyncChronoqueueClient):
             checkout_data = {**payload_data, "total": total}
 
             # Simulate long processing (60 seconds)
-            # During this time, AsyncChronoqueueClient automatically sends heartbeats via asyncio task
+            # During this time, AsyncNzovuClient automatically sends heartbeats via asyncio task
             logger.info(f"⏳ [ASYNC] Starting 60s processing for message {message.message_id[:8]}...")
 
             for i in range(12):  # 12 iterations of 5 seconds = 60 seconds
@@ -154,7 +154,7 @@ async def process_store_cart_async(async_client: AsyncChronoqueueClient):
             await asyncio.sleep(5)
 
 
-async def process_checkout_cart_async(async_client: AsyncChronoqueueClient):
+async def process_checkout_cart_async(async_client: AsyncNzovuClient):
     """
     Async worker for 'checkout-cart' queue - processes quickly WITHOUT heartbeat.
 

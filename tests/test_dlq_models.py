@@ -4,12 +4,12 @@ Unit tests for DLQ Pydantic models.
 
 import unittest
 
-from chronoqueue.api.message.v1 import message_pb2
-from chronoqueue.api.queueservice.v1 import request_response_pb2
+from nzovu.api.message.v1 import message_pb2
+from nzovu.api.queueservice.v1 import request_response_pb2
 
 # Test with Pydantic if available
 try:
-    from chronoqueue.models import (
+    from nzovu.models import (
         DeleteFromDLQResponse,
         GetDLQMessagesResponse,
         GetDLQStatsResponse,

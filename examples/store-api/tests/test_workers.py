@@ -3,12 +3,12 @@ from unittest.mock import Mock, AsyncMock, patch
 from api.workers.store_cart_worker import process_cart
 from api.workers.queue_manager_worker import create_store_cart_queue, create_checkout_cart_queue
 from api.models.request_models import CartItems, Item
-from chronoqueue.utils import QueueType
+from nzovu.utils import QueueType
 
 
 @pytest.fixture
 def mock_client():
-    """Mock ChronoqueueClient."""
+    """Mock NzovuClient."""
     return Mock()
 
 

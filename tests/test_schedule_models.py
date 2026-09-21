@@ -6,10 +6,10 @@ import unittest
 
 import pytest
 
-from chronoqueue import models
-from chronoqueue.api.queueservice.v1 import request_response_pb2
-from chronoqueue.api.schedule.v1 import schedule_pb2
-from chronoqueue.utils import ResponseWrapper
+from nzovu import models
+from nzovu.api.queueservice.v1 import request_response_pb2
+from nzovu.api.schedule.v1 import schedule_pb2
+from nzovu.utils import ResponseWrapper
 
 
 @pytest.mark.skipif(not models.PYDANTIC_AVAILABLE, reason="Pydantic not installed")
@@ -53,7 +53,7 @@ class TestSchedulePydanticModels(unittest.TestCase):
         # Create a proto schedule
         from google.protobuf.struct_pb2 import Struct
 
-        from chronoqueue.api.common.v1 import common_pb2
+        from nzovu.api.common.v1 import common_pb2
 
         payload_struct = Struct()
         payload_struct.update({"task": "daily_report"})
@@ -93,7 +93,7 @@ class TestSchedulePydanticModels(unittest.TestCase):
         """Test GetScheduleResponse.from_proto conversion."""
         from google.protobuf.struct_pb2 import Struct
 
-        from chronoqueue.api.common.v1 import common_pb2
+        from nzovu.api.common.v1 import common_pb2
 
         payload_struct = Struct()
         payload_struct.update({"data": "value"})
@@ -121,7 +121,7 @@ class TestSchedulePydanticModels(unittest.TestCase):
         """Test ListSchedulesResponse.from_proto conversion."""
         from google.protobuf.struct_pb2 import Struct
 
-        from chronoqueue.api.common.v1 import common_pb2
+        from nzovu.api.common.v1 import common_pb2
 
         # Create multiple schedules
         schedules = []
@@ -193,7 +193,7 @@ class TestSchedulePydanticModels(unittest.TestCase):
         """Test ResponseWrapper.to_model() with ListSchedulesResponse."""
         from google.protobuf.struct_pb2 import Struct
 
-        from chronoqueue.api.common.v1 import common_pb2
+        from nzovu.api.common.v1 import common_pb2
 
         payload_struct = Struct()
         payload_struct.update({"task": "test"})

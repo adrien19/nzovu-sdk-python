@@ -1,18 +1,19 @@
-// ChronoQueue Message API v1
+// Nzovu Message API v1
 //
 // This file defines the core Message structure and its lifecycle states.
-// Messages are the fundamental unit of work in ChronoQueue.
+// Messages are the fundamental unit of work in Nzovu.
 
 syntax = "proto3";
-package chronoqueue.api.message.v1;
+package nzovu.api.message.v1;
 
-option go_package = "github.com/adrien19/chronoqueue/api/message/v1;message";
+option go_package = "github.com/adrien19/nzovu/api/message/v1;message";
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
+import "proto/google/api/field_behavior.proto";
 import "proto/common/v1/common.proto";
 
-// Message represents a unit of work in ChronoQueue.
+// Message represents a unit of work in Nzovu.
 //
 // A message encapsulates:
 // - Your business data (payload)
@@ -48,20 +49,20 @@ import "proto/common/v1/common.proto";
 message Message {
     // message_id: Unique identifier for this message within its queue.
     // Must be unique per queue. Used for deduplication and idempotency.
-    // If you retry posting the same message_id, ChronoQueue returns the existing message.
+    // Posting the same message_id to the same queue again returns ALREADY_EXISTS.
     // Recommended format: UUID, task ID, or "{entity_type}:{entity_id}".
-  string message_id = 1;
+  string message_id = 1 [(google.api.field_behavior) = REQUIRED];
 
     // Metadata contains all message execution and lifecycle information.
   message Metadata {
         // Reserved field numbers from deprecated features (for backward compatibility).
-        // These fields were removed as part of Redis Streams migration.
+        // These fields belong to a deprecated pre-SQL storage contract.
     reserved 3, 8;
     reserved "invisibility_duration", "invisibility_expiry";
 
         // payload: The business data and metadata to be processed.
         // This is what your workers receive and act upon.
-    chronoqueue.api.common.v1.Payload payload = 1;
+    nzovu.api.common.v1.Payload payload = 1;
 
         // State represents the message lifecycle stage.
         //
@@ -99,7 +100,7 @@ message Message {
     google.protobuf.Duration lease_duration = 5;
 
         // lease_expiry: Unix timestamp (milliseconds) when the current lease expires.
-        // Managed automatically by ChronoQueue. Workers can monitor this to know when to renew.
+        // Managed automatically by Nzovu. Workers can monitor this to know when to renew.
         // If current time > lease_expiry, message will be reclaimed and made PENDING again.
     int64 lease_expiry = 6;
 
@@ -109,7 +110,7 @@ message Message {
     int32 lease_renewal_count = 7;
 
         // priority: Message priority score (0-4, higher = processed first).
-        // ChronoQueue uses priority streams (high: ≥3, medium: 2, low: ≤1).
+        // Nzovu uses priority streams (high: ≥3, medium: 2, low: ≤1).
         // Messages with the same priority are processed FIFO.
         // Use for: urgent tasks (4), normal (2), background (0).
     int64 priority = 9;
@@ -128,7 +129,7 @@ message Message {
         // - Unset fields inherit from the queue lease policy.
         //
         // This lets you avoid *_override fields; presence is the override.
-    chronoqueue.api.common.v1.LeasePolicy lease_policy = 11;
+    nzovu.api.common.v1.LeasePolicy lease_policy = 11;
 
         // -----------------------------------------------------------------------
         // Current attempt runtime
@@ -170,9 +171,22 @@ message Message {
     google.protobuf.Timestamp scheduled_time = 20;
 
         // priority_level: Internal priority level for stream routing (auto-calculated).
-        // Managed by ChronoQueue based on priority score. Read-only from client perspective.
+        // Managed by Nzovu based on priority score. Read-only from client perspective.
         // Used internally for routing to high/medium/low priority streams.
     int32 priority_level = 21;
+
+        // Header is an ordered message header. Header keys may
+        // repeat, and values are opaque bytes. Headers are optional and are not
+        // part of the business payload.
+    message Header {
+      string key   = 1;
+      bytes  value = 2;
+    }
+
+        // headers: Optional ordered application headers delivered with the message.
+        // Headers count toward the total message size and have separate per-value
+        // and aggregate limits. They are stored outside payload encryption.
+    repeated Header headers = 22;
   }
 
     // metadata: All message execution and lifecycle information.

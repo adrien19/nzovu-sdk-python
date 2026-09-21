@@ -42,6 +42,12 @@ jobs:
       - name: Install dependencies
         run: make install-dev
       
+      - name: Verify generated protocols
+        run: make check-proto
+
+      - name: Check formatting
+        run: make format FORMAT_FLAGS=--check
+
       - name: Run linting
         run: make lint
 
@@ -143,6 +149,9 @@ jobs:
       
       - name: Build package
         run: make build
+
+      - name: Verify installed distributions
+        run: make check-artifacts
       
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
