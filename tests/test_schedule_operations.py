@@ -76,7 +76,6 @@ class TestScheduleOperations(unittest.TestCase):
             priority=4,
             max_messages=100,
             lease_duration="5m",
-            timezone="America/New_York",
         )
 
         mock_response = request_response_pb2.CreateScheduleResponse()
@@ -88,7 +87,6 @@ class TestScheduleOperations(unittest.TestCase):
         self.assertEqual(call_args.schedule.metadata.priority, 4)
         self.assertEqual(call_args.schedule.metadata.max_messages, 100)
         self.assertTrue(call_args.schedule.metadata.has_max_messages)
-        self.assertEqual(call_args.schedule.metadata.timezone, "America/New_York")
 
     def test_delete_schedule(self):
         """Test deleting a schedule."""

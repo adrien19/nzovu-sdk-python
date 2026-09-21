@@ -150,6 +150,9 @@ jobs:
       - name: Build package
         run: make build
 
+      - name: Test installed base package without Pydantic
+        run: make check-base-tests
+
       - name: Verify installed distributions
         run: make check-artifacts
       

@@ -276,11 +276,11 @@ async def test_send_message_heartbeat_success(async_client):
     """Test send_message_heartbeat async method."""
     async_client.stub = AsyncMock()
     mock_response = MagicMock()
-    async_client.stub.SendMessageHeartbeat = AsyncMock(return_value=mock_response)
+    async_client.stub.SendMessageHeartBeat = AsyncMock(return_value=mock_response)
 
     response = await async_client.send_message_heartbeat("test_queue", "msg123")
     assert response is not None
-    async_client.stub.SendMessageHeartbeat.assert_called_once()
+    async_client.stub.SendMessageHeartBeat.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -651,20 +651,12 @@ async def test_post_messages_bulk_invalid_transaction_mode(async_client):
 
 @pytest.mark.asyncio
 async def test_post_messages_bulk_empty_list(async_client):
-    """Test post_messages_bulk with empty message list."""
+    from nzovu.exceptions import RpcOperationError
+
     async_client.stub = AsyncMock()
-    mock_response = MagicMock()
-    mock_response.success = True
-    mock_response.successful_count = 0
-    mock_response.failed_count = 0
-    async_client.stub.PostMessagesBulk = AsyncMock(return_value=mock_response)
-
-    # Call with empty list
-    response = await async_client.post_messages_bulk("test_queue", [])
-
-    # Should still call the API
-    assert response is not None
-    async_client.stub.PostMessagesBulk.assert_called_once()
+    with pytest.raises(RpcOperationError, match="1-1000 messages"):
+        await async_client.post_messages_bulk("test_queue", [])
+    async_client.stub.PostMessagesBulk.assert_not_called()
 
 
 @pytest.mark.asyncio

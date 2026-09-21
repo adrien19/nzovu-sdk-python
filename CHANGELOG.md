@@ -8,6 +8,11 @@
   continuation tokens in typed responses.
 - Remove schedule-level exclusivity and correct acknowledgment/schedule enum conversion.
 - Validate wheel/sdist installs in isolated environments before distribution.
-- Continue API-wrapper migration before the first `0.0.1` release.
+- Align all 31 sync/async RPC contracts and add complete response conversion,
+  including bulk results, cancellation, schedule executions and claim metadata.
+- Preserve binary headers, optional lease limits, precise times and large counters.
+- Add request validation, explicit DLQ targets and bounded lazy pagination.
+- Test the installed base package without Pydantic; retain authentication and
+  worker-lifecycle migration gates before the first `0.0.1` release.
 
 Earlier source-package history is preserved in [the historical changelog](docs/LEGACY_CHANGELOG.md).

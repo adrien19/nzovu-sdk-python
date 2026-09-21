@@ -455,20 +455,9 @@ def test_post_messages_bulk_grpc_error(mock_client: NzovuClient):
 
 
 def test_post_messages_bulk_empty_list(mock_client: NzovuClient):
-    """Test post_messages_bulk with empty message list."""
-    mock_response = request_response_pb2.PostMessagesBulkResponse(
-        success=True,
-        successful_count=0,
-        failed_count=0,
-    )
-    mock_client.stub.PostMessagesBulk.return_value = mock_response
-
-    # Call with empty list
-    response = mock_client.post_messages_bulk("test_queue", [])
-
-    # Should still call the API
-    mock_client.stub.PostMessagesBulk.assert_called_once()
-    assert response.to_proto() == mock_response
+    with pytest.raises(RpcOperationError, match="1-1000 messages"):
+        mock_client.post_messages_bulk("test_queue", [])
+    mock_client.stub.PostMessagesBulk.assert_not_called()
 
 
 def test_post_messages_bulk_with_enum_all_or_nothing(mock_client: NzovuClient):

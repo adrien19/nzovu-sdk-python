@@ -1,21 +1,28 @@
+import json
 import os
 import re
 import socket
 import uuid
 from dataclasses import dataclass, field
+from decimal import Decimal, localcontext
 from enum import Enum
 from typing import Any, Callable, Dict, Optional, Type, TypeVar
 
 from google.protobuf import json_format
 from google.protobuf.duration_pb2 import Duration
-from google.protobuf.struct_pb2 import Struct, Value
+from google.protobuf.struct_pb2 import Struct
+from google.protobuf.timestamp_pb2 import Timestamp
 
 from .api.common.v1.common_pb2 import Payload  # type: ignore[attr-defined]
 from .api.message.v1.message_pb2 import Message  # type: ignore[attr-defined]
 from .api.queue.v1.queue_pb2 import MessageRetentionPolicy as _MessageRetentionPolicyProto  # type: ignore[attr-defined]
 from .api.queue.v1.queue_pb2 import QueueType  # type: ignore[attr-defined]
-from .api.queueservice.v1.request_response_pb2 import PostMessageRequest  # type: ignore[attr-defined]
-from .api.schedule.v1.schedule_pb2 import Schedule  # type: ignore[attr-defined]
+from .api.queueservice.v1.request_response_pb2 import (  # type: ignore[attr-defined]
+    CreateScheduleRequest,
+    PostMessageRequest,
+    PostMessagesBulkRequest,
+)
+from .api.schedule.v1.schedule_pb2 import CalendarSchedule, Schedule  # type: ignore[attr-defined]
 
 # Import Pydantic models (will handle if not available)
 try:
@@ -60,6 +67,79 @@ def generate_worker_id(prefix: str = "") -> str:
     if prefix:
         return f"{prefix}-{hostname}-{pid}-{unique_id}"
     return f"{hostname}-{pid}-{unique_id}"
+
+
+def validate_integer(value, name, minimum, maximum):
+    if type(value) is not int or not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be an integer between {minimum} and {maximum}")
+
+
+def validate_page(page_size, page_token):
+    validate_integer(page_size, "page_size", 0, 1000)
+    if not isinstance(page_token, str):
+        raise ValueError("page_token must be a string")
+
+
+def require_name(value, name):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{name} is required")
+
+
+@dataclass(frozen=True)
+class Header:
+    key: str
+    value: bytes
+
+
+def build_headers(headers):
+    result = []
+    total = 0
+    for header in headers:
+        if not isinstance(header, Header):
+            raise ValueError("headers must contain Header instances")
+        if not isinstance(header.key, str) or not re.fullmatch(r"[a-z0-9-]+", header.key):
+            raise ValueError("Header keys allow lowercase letters, numbers and hyphens")
+        if header.key.startswith(("x-nzovu-", "x-internal-", "x-system-")):
+            raise ValueError("Header key uses a reserved prefix")
+        if not isinstance(header.value, bytes) or len(header.value) > 4096:
+            raise ValueError("Header values must be bytes of at most 4096 bytes")
+        total += len(header.key) + len(header.value)
+        result.append(Message.Metadata.Header(key=header.key, value=header.value))
+    if total > 32768:
+        raise ValueError("Total header keys and values exceed 32768 bytes")
+    return result
+
+
+def validate_json_value(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError("JSON object keys must be strings")
+            validate_json_value(item)
+    elif isinstance(value, list):
+        for item in value:
+            validate_json_value(item)
+    elif value is not None and not isinstance(value, (str, bool, int, float)):
+        raise ValueError("Payload values must be JSON-compatible")
+
+
+def build_payload(data, metadata=None, content_type="", schema_id="", schema_version=0):
+    if not isinstance(data, dict) or (metadata is not None and not isinstance(metadata, dict)):
+        raise ValueError("Payload data and metadata must be dictionaries")
+    normalized = content_type.split(";", 1)[0].strip().lower()
+    if normalized not in {"", "application/json", "application/x-json"}:
+        raise ValueError("content_type must describe a JSON payload")
+    validate_integer(schema_version, "schema_version", 0, 2**31 - 1)
+    values = {
+        "data": data,
+        "metadata": metadata or {},
+        "content_type": content_type,
+        "schema_id": schema_id,
+        "schema_version": schema_version,
+    }
+    validate_json_value(values)
+    json.dumps(values, allow_nan=False)
+    return json_format.ParseDict(values, Payload())
 
 
 @dataclass
@@ -201,8 +281,15 @@ def string_to_duration(s: str) -> Duration:
         raise ValueError(f"Invalid duration format: {s}")
 
     value, unit = match.groups()
-    seconds = float(value) * unit_map[unit]
-    return Duration(seconds=int(seconds), nanos=int((seconds % 1) * 1e9))
+    with localcontext() as context:
+        context.prec = max(28, len(value) + 12)
+        nanoseconds = Decimal(value) * unit_map[unit] * 1_000_000_000
+    if nanoseconds != nanoseconds.to_integral_value():
+        raise ValueError("Duration precision cannot exceed nanoseconds")
+    seconds, nanos = divmod(int(nanoseconds), 1_000_000_000)
+    if seconds > 315_576_000_000:
+        raise ValueError("Duration exceeds protobuf range")
+    return Duration(seconds=seconds, nanos=nanos)
 
 
 def dict_to_protobuf_struct(data: Dict[str, Any]) -> Struct:
@@ -249,8 +336,11 @@ class LeasePolicyOptions:
     max_extension: Optional[str] = None
     heartbeat_timeout: Optional[str] = None
     extend_step: Optional[str] = None
+    max_renewals: Optional[int] = None
 
     def __post_init__(self):
+        if self.max_renewals is not None:
+            validate_integer(self.max_renewals, "max_renewals", 0, 2**31 - 1)
         duration_pattern = re.compile(r"^\d+(\.\d+)?[smhd]$")
         for field_name in ["base_lease", "max_extension", "heartbeat_timeout", "extend_step"]:
             value = getattr(self, field_name)
@@ -272,7 +362,10 @@ def build_lease_policy(opts: Optional[LeasePolicyOptions]):
         return None
 
     # Check if any field is set
-    if not any([opts.base_lease, opts.max_extension, opts.heartbeat_timeout, opts.extend_step]):
+    if (
+        not any([opts.base_lease, opts.max_extension, opts.heartbeat_timeout, opts.extend_step])
+        and opts.max_renewals is None
+    ):
         return None
 
     from .api.common.v1.common_pb2 import LeasePolicy  # type: ignore[attr-defined]
@@ -291,6 +384,9 @@ def build_lease_policy(opts: Optional[LeasePolicyOptions]):
     if opts.extend_step:
         lp.extend_step.CopyFrom(string_to_duration(opts.extend_step))
 
+    if opts.max_renewals is not None:
+        validate_integer(opts.max_renewals, "max_renewals", 0, 2**31 - 1)
+        lp.max_renewals = opts.max_renewals
     return lp
 
 
@@ -321,12 +417,19 @@ class PostMessageOptions:
 
     priority: int = 0
     state: MessageState = MessageState.INVISIBLE
-    lease_duration: str = "1s"
+    lease_duration: Optional[str] = None
     max_attempts: int = 0
     data_metadata: Dict = field(default_factory=dict)
     lease_policy: Optional[LeasePolicyOptions] = None
 
+    headers: list[Header] = field(default_factory=list)
+    content_type: str = ""
+    schema_id: str = ""
+    schema_version: int = 0
+    scheduled_time: Optional[str] = None
+
     def __post_init__(self):
+        validate_integer(self.priority, "priority", 0, 4)
         duration_pattern = re.compile(r"^\d+(\.\d+)?[smhd]$")
         if self.lease_duration and not duration_pattern.match(self.lease_duration):
             raise ValueError("lease_duration must be in format '[number]unit', e.g., '5s', '2m', '3.5m', '3d'.")
@@ -396,6 +499,12 @@ class MessagePriorityRange:
 
     min: int = 0
     max: int = 4
+
+    def __post_init__(self):
+        validate_integer(self.min, "priority_range.min", 0, 4)
+        validate_integer(self.max, "priority_range.max", 0, 4)
+        if self.min > self.max:
+            raise ValueError("priority_range.min cannot exceed max")
 
 
 @dataclass
@@ -521,8 +630,6 @@ class ScheduleOptions:
         Duration for message leases. Must be in format "[number]unit",
         for example: "5s", "2m", "3.5m", or "3d".
 
-    timezone : Optional[str]
-        Timezone for schedule execution (e.g., "America/New_York").
     """
 
     payload: dict
@@ -533,9 +640,16 @@ class ScheduleOptions:
     priority: Optional[int] = 0
     max_messages: Optional[int] = None
     lease_duration: Optional[str] = None
-    timezone: Optional[str] = None
+
+    headers: list[Header] = field(default_factory=list)
+    data_metadata: Dict = field(default_factory=dict)
+    content_type: str = ""
+    schema_id: str = ""
+    schema_version: int = 0
 
     def __post_init__(self):
+        if self.priority is not None:
+            validate_integer(self.priority, "priority", 0, 4)
         if self.cron_schedule and self.calendar_schedule:
             raise ValueError("Cannot specify both cron_schedule and calendar_schedule")
         if not self.cron_schedule and not self.calendar_schedule:
@@ -578,49 +692,72 @@ class SchemaOptions:
 
 
 def _create_post_message_request(params: PostMessageParams) -> PostMessageRequest:
-    """
-    Creates a PostMessageRequest object given options.
+    require_name(params.queue_name, "queue_name")
+    if not isinstance(params.message_id, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,256}", params.message_id):
+        raise ValueError("message_id must contain 1-256 ASCII letters, numbers, underscores or hyphens")
+    options = params.options or PostMessageOptions()
+    validate_integer(options.priority, "priority", 0, 4)
+    payload = build_payload(
+        params.data, options.data_metadata, options.content_type, options.schema_id, options.schema_version
+    )
+    metadata = Message.Metadata(
+        payload=payload,
+        state=options.state.name if isinstance(options.state, MessageState) else options.state,
+        lease_duration=string_to_duration(options.lease_duration) if options.lease_duration is not None else None,
+        max_attempts=options.max_attempts,
+        priority=options.priority,
+        headers=build_headers(options.headers),
+    )
+    policy = build_lease_policy(options.lease_policy)
+    if policy is not None:
+        metadata.lease_policy.CopyFrom(policy)
+    if options.scheduled_time is not None:
+        scheduled_time = Timestamp()
+        scheduled_time.FromJsonString(options.scheduled_time)
+        metadata.scheduled_time.CopyFrom(scheduled_time)
+    return PostMessageRequest(
+        queue_name=params.queue_name, message=Message(message_id=params.message_id, metadata=metadata)
+    )
 
-    Args:
-        params (PostMessageParams): required parameters for posting a message
 
-    Returns:
-        PostMessageRequest: The populated protobuf request object.
-    """
+def build_bulk_request(queue_name, messages, transaction_mode):
+    require_name(queue_name, "queue_name")
+    if not 1 <= len(messages) <= 1000:
+        raise ValueError("Bulk requests require 1-1000 messages")
+    mode = transaction_mode.value if isinstance(transaction_mode, TransactionMode) else transaction_mode
+    if mode not in {"ALL_OR_NOTHING", "BEST_EFFORT"}:
+        raise ValueError(f"Invalid transaction_mode: {transaction_mode}")
+    request = PostMessagesBulkRequest(queue_name=queue_name, transaction_mode=mode)
+    for index, params in enumerate(messages):
+        if params.queue_name != queue_name:
+            raise ValueError(f"messages[{index}].queue_name must match queue_name='{queue_name}'")
+        request.messages.append(_create_post_message_request(params).message)
+    return request
 
-    data_struct = dict_to_protobuf_struct(params.data)
 
-    metadata_map = {}
-    if params.options and params.options.data_metadata:
-        metadata_map = {k: Value(string_value=v) for k, v in params.options.data_metadata.items()}
-
-    payload = Payload(metadata=metadata_map, data=data_struct)
-
-    if params.options:
-        # Build lease policy if provided
-        lease_policy = build_lease_policy(params.options.lease_policy)
-
-        metadata = Message.Metadata(
-            payload=payload,
-            state=(
-                params.options.state.value if isinstance(params.options.state, MessageState) else params.options.state
-            ),
-            lease_duration=string_to_duration(params.options.lease_duration),
-            max_attempts=params.options.max_attempts,
-            priority=params.options.priority,
-        )
-
-        # Add lease_policy if present
-        if lease_policy:
-            metadata.lease_policy.CopyFrom(lease_policy)
+def build_schedule_request(schedule_id, options):
+    require_name(schedule_id, "schedule_id")
+    require_name(options.queue_name, "queue_name")
+    options.__post_init__()
+    metadata = Schedule.Metadata(
+        payload=build_payload(
+            options.payload, options.data_metadata, options.content_type, options.schema_id, options.schema_version
+        ),
+        state=options.state.name,
+        queue_name=options.queue_name,
+        headers=build_headers(options.headers),
+        priority=options.priority,
+    )
+    if options.cron_schedule:
+        metadata.cron_schedule = options.cron_schedule
     else:
-        metadata = Message.Metadata(payload=payload)
-
-    message = Message(message_id=params.message_id, metadata=metadata)
-
-    post_message_request = PostMessageRequest(queue_name=params.queue_name, message=message)
-
-    return post_message_request
+        metadata.calendar_schedule.CopyFrom(json_format.ParseDict(options.calendar_schedule, CalendarSchedule()))
+    if options.max_messages is not None:
+        metadata.has_max_messages = True
+        metadata.max_messages = options.max_messages
+    if options.lease_duration is not None:
+        metadata.lease_duration.CopyFrom(string_to_duration(options.lease_duration))
+    return CreateScheduleRequest(schedule=Schedule(schedule_id=schedule_id, metadata=metadata))
 
 
 class ResponseWrapper:
@@ -671,6 +808,8 @@ class ResponseWrapper:
                 "DeleteQueueResponse": models.DeleteQueueResponse,
                 "ListQueuesResponse": models.ListQueuesResponse,
                 "PostMessageResponse": models.PostMessageResponse,
+                "PostMessagesBulkResponse": models.PostMessagesBulkResponse,
+                "CancelMessageResponse": models.CancelMessageResponse,
                 "GetNextMessageResponse": models.GetNextMessageResponse,
                 "AcknowledgeMessageResponse": models.AcknowledgeMessageResponse,
                 "RenewMessageLeaseResponse": models.RenewMessageLeaseResponse,
@@ -823,3 +962,25 @@ class ResponseWrapper:
             >>> success = response.success
         """
         return getattr(self._response_protobuf, name)
+
+
+PAGED_METHODS = frozenset(
+    {"list_queues", "list_schedules", "list_schemas", "get_schedule_history", "get_dlq_messages", "peek_queue_messages"}
+)
+
+
+def page_call_arguments(method, args, kwargs, token):
+    from dataclasses import replace
+
+    kwargs = dict(kwargs)
+    if method == "peek_queue_messages":
+        params = args[0] if args else kwargs.pop("params")
+        return (), dict(kwargs, params=replace(params, page_token=token))
+    return args, dict(kwargs, page_token=token)
+
+
+def validate_page_iterator(method, max_pages):
+    if method not in PAGED_METHODS:
+        raise ValueError("iter_pages requires a paginated SDK method name")
+    if max_pages is not None and (type(max_pages) is not int or max_pages < 1):
+        raise ValueError("max_pages must be a positive integer or None")

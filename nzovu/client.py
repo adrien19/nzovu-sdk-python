@@ -11,7 +11,6 @@ import grpc
 from google.protobuf import json_format
 from google.protobuf.duration_pb2 import Duration
 
-from .api.common.v1 import common_pb2
 from .api.message.v1.message_pb2 import Message
 from .api.queue.v1 import queue_pb2
 from .api.queueservice.v1 import request_response_pb2, service_pb2_grpc
@@ -29,9 +28,15 @@ from .utils import (
     TlsConfig,
     TransactionMode,
     _create_post_message_request,
+    build_bulk_request,
     build_lease_policy,
-    dict_to_protobuf_struct,
+    build_schedule_request,
+    page_call_arguments,
+    require_name,
     string_to_duration,
+    validate_integer,
+    validate_page,
+    validate_page_iterator,
 )
 
 # Initialize logging
@@ -341,6 +346,7 @@ class NzovuClient:
         RpcOperationError
             If the gRPC operation fails and no custom error handler is provided.
         """
+        validate_page(page_size, page_token)
         try:
             request = request_response_pb2.ListQueuesRequest(prefix=prefix, page_size=page_size, page_token=page_token)
             response = self.stub.ListQueues(request)
@@ -461,30 +467,7 @@ class NzovuClient:
         """
         try:
             # Build the bulk request
-            request = request_response_pb2.PostMessagesBulkRequest()
-            request.queue_name = queue_name
-
-            # Convert transaction mode to protobuf enum
-            # Handle both TransactionMode enum and string for backwards compatibility
-            mode_value = transaction_mode.value if isinstance(transaction_mode, TransactionMode) else transaction_mode
-
-            if mode_value == "ALL_OR_NOTHING":
-                request.transaction_mode = request_response_pb2.PostMessagesBulkRequest.ALL_OR_NOTHING
-            elif mode_value == "BEST_EFFORT":
-                request.transaction_mode = request_response_pb2.PostMessagesBulkRequest.BEST_EFFORT
-            else:
-                raise ValueError(
-                    f"Invalid transaction_mode: {transaction_mode}. Must be TransactionMode.ALL_OR_NOTHING or TransactionMode.BEST_EFFORT"
-                )
-
-            # Add each message to the request
-            for idx, msg_params in enumerate(messages):
-                if msg_params.queue_name and msg_params.queue_name != queue_name:
-                    raise ValueError(f"messages[{idx}].queue_name must match queue_name='{queue_name}'")
-                msg_request = _create_post_message_request(params=msg_params)
-                request.messages.append(msg_request.message)
-
-            # Execute the bulk post
+            request = build_bulk_request(queue_name, messages, transaction_mode)
             response = self.stub.PostMessagesBulk(request)
             return ResponseWrapper(response_protobuf=response)
 
@@ -504,6 +487,9 @@ class NzovuClient:
         exclusivity_key: str = "",
         enable_heartbeat=False,
         error_handler=None,
+        *,
+        worker_id: Optional[str] = None,
+        attempt_id: Optional[str] = None,
     ) -> ResponseWrapper:
         """
         Retrieve the next message from a specified queue in the Nzovu service.
@@ -561,7 +547,8 @@ class NzovuClient:
                 queue_name=queue_name,
                 lease_duration=pb_release_duration,
                 exclusivity_key=exclusivity_key,
-                worker_id=self._worker_id,
+                worker_id=self._worker_id if worker_id is None else worker_id,
+                attempt_id=attempt_id,
             )
             response = self.stub.GetNextMessage(request)
             response_wrapper = ResponseWrapper(response_protobuf=response)
@@ -940,7 +927,14 @@ class NzovuClient:
             self._handle_error(error, handler=error_handler)
 
     def renew_message_lease(
-        self, queue_name: str, message_id: str, new_lease_duration: str, error_handler=None
+        self,
+        queue_name: str,
+        message_id: str,
+        new_lease_duration: str,
+        error_handler=None,
+        *,
+        worker_id: Optional[str] = None,
+        attempt_id: Optional[str] = None,
     ) -> ResponseWrapper:
         """
         Renews the lease duration of a specified message in the Nzovu service.
@@ -995,7 +989,11 @@ class NzovuClient:
             pb_release_duration: Duration = string_to_duration(new_lease_duration)
 
             request = request_response_pb2.RenewMessageLeaseRequest(
-                queue_name=queue_name, message_id=message_id, lease_duration=pb_release_duration
+                queue_name=queue_name,
+                message_id=message_id,
+                lease_duration=pb_release_duration,
+                worker_id=worker_id,
+                attempt_id=attempt_id,
             )
             response = self.stub.RenewMessageLease(request)
             return ResponseWrapper(response_protobuf=response)
@@ -1049,9 +1047,11 @@ class NzovuClient:
         >>> client.peek_queue_messages(params)
 
         """
+        validate_page(params.page_size, params.page_token)
         try:
             priority_range = None
             if params.priority_range is not None:
+                params.priority_range.__post_init__()
                 priority_range = request_response_pb2.PeekQueueMessagesRequest.PriorityRange(
                     min=params.priority_range.min, max=params.priority_range.max
                 )
@@ -1221,40 +1221,7 @@ class NzovuClient:
         """
         try:
             # Build payload
-            payload_struct = dict_to_protobuf_struct(options.payload)
-            payload = common_pb2.Payload(data=payload_struct)
-
-            # Build metadata
-            metadata = schedule_pb2.Schedule.Metadata(
-                payload=payload,
-                state=options.state.name,
-                queue_name=options.queue_name,
-            )
-
-            # Set schedule config (cron or calendar)
-            if options.cron_schedule:
-                metadata.cron_schedule = options.cron_schedule
-            elif options.calendar_schedule:
-                # Convert dict to CalendarSchedule protobuf
-                calendar_schedule = json_format.ParseDict(options.calendar_schedule, schedule_pb2.CalendarSchedule())
-                metadata.calendar_schedule.CopyFrom(calendar_schedule)
-
-            # Set optional fields
-            if options.priority is not None:
-                metadata.priority = options.priority
-            if options.max_messages is not None:
-                metadata.has_max_messages = True
-                metadata.max_messages = options.max_messages
-            if options.lease_duration:
-                metadata.lease_duration.CopyFrom(string_to_duration(options.lease_duration))
-            if options.timezone:
-                metadata.timezone = options.timezone
-
-            # Build schedule
-            schedule = schedule_pb2.Schedule(schedule_id=schedule_id, metadata=metadata)
-
-            # Build request and call service
-            request = request_response_pb2.CreateScheduleRequest(schedule=schedule)
+            request = build_schedule_request(schedule_id, options)
             response = self.stub.CreateSchedule(request)
             return ResponseWrapper(response_protobuf=response)
 
@@ -1378,6 +1345,7 @@ class NzovuClient:
         >>> response = client.list_schedules(prefix="daily_")
         >>> schedules = response.to_dict()
         """
+        validate_page(page_size, page_token)
         try:
             request = request_response_pb2.ListSchedulesRequest(
                 prefix=prefix, page_size=page_size, page_token=page_token
@@ -1427,6 +1395,7 @@ class NzovuClient:
         >>> response = client.get_schedule_history("daily_report_schedule", page_size=20)
         >>> history = response.to_dict()
         """
+        validate_page(page_size, page_token)
         try:
             request = request_response_pb2.GetScheduleHistoryRequest(
                 schedule_id=schedule_id, page_size=page_size, page_token=page_token
@@ -1597,6 +1566,7 @@ class NzovuClient:
         >>> response = client.preview_calendar_schedule(calendar_config, count=5)
         >>> times = response.to_dict()
         """
+        validate_integer(count, "count", 0, 100)
         try:
             calendar_schedule_pb = json_format.ParseDict(calendar_schedule, schedule_pb2.CalendarSchedule())
             request = request_response_pb2.PreviewCalendarScheduleRequest(
@@ -1653,6 +1623,8 @@ class NzovuClient:
         >>> result = response.to_model()
         >>> print(f"Schema {result.schema_id} registered with version {result.version}")
         """
+        if options.content_type not in {"", "json-schema"}:
+            raise ValueError("Schema content_type must be json-schema")
         try:
             request = request_response_pb2.RegisterSchemaRequest(
                 schema_id=schema_id,
@@ -1706,6 +1678,7 @@ class NzovuClient:
         >>> # Get specific version
         >>> response = client.get_schema("order_schema", version=2)
         """
+        validate_integer(version, "version", 0, 2**31 - 1)
         try:
             request = request_response_pb2.GetSchemaRequest(schema_id=schema_id, version=version)
             response = self.stub.GetSchema(request)
@@ -1768,6 +1741,7 @@ class NzovuClient:
         >>> # Filter by prefix
         >>> response = client.list_schemas(prefix="order_", active_only=True)
         """
+        validate_page(page_size, page_token)
         try:
             request = request_response_pb2.ListSchemasRequest(
                 prefix=prefix, page_size=page_size, page_token=page_token, active_only=active_only
@@ -1814,6 +1788,7 @@ class NzovuClient:
         >>> # Delete all versions
         >>> response = client.delete_schema("order_schema")
         """
+        validate_integer(version, "version", 0, 2**31 - 1)
         try:
             request = request_response_pb2.DeleteSchemaRequest(schema_id=schema_id, version=version)
             response = self.stub.DeleteSchema(request)
@@ -1865,6 +1840,7 @@ class NzovuClient:
         ...     for error in result.errors:
         ...         print(f"Error in {error.field}: {error.message}")
         """
+        validate_integer(version, "version", 0, 2**31 - 1)
         try:
             request = request_response_pb2.ValidatePayloadRequest(schema_id=schema_id, version=version, payload=payload)
             response = self.stub.ValidatePayload(request)
@@ -1918,6 +1894,7 @@ class NzovuClient:
         >>> for msg in messages.messages:
         ...     print(f"Message {msg.message_id}: {msg.metadata.state}")
         """
+        validate_page(page_size, page_token)
         try:
             request = request_response_pb2.GetDLQMessagesRequest(
                 dlq_name=dlq_name, page_size=page_size, page_token=page_token
@@ -1930,13 +1907,13 @@ class NzovuClient:
             self._handle_error(error, handler=error_handler)
 
     def requeue_from_dlq(
-        self, dlq_name: str, message_id: str, target_queue: str = "", error_handler=None
+        self, dlq_name: str, message_id: str, target_queue: str, error_handler=None
     ) -> ResponseWrapper:
         """
-        Move a message from DLQ back to its original queue or a specified target queue.
+        Move a message from DLQ to an explicit existing target queue.
 
         This allows recovery of failed messages by requeuing them for another processing attempt.
-        If target_queue is not specified, the message is requeued to its original queue.
+        The server requires an explicit existing target queue.
 
         Parameters:
         ----------
@@ -1946,8 +1923,8 @@ class NzovuClient:
         message_id : str
             Unique identifier of the message to requeue.
 
-        target_queue : str, optional
-            Target queue name. If empty, requeues to the message's original queue.
+        target_queue : str
+            Required existing target queue name.
 
         error_handler : callable, optional
             A custom error handling function invoked if an error occurs.
@@ -1965,7 +1942,7 @@ class NzovuClient:
         Example:
         --------
         >>> # Requeue to original queue
-        >>> response = client.requeue_from_dlq("orders_queue_dlq", "msg-123")
+        >>> response = client.requeue_from_dlq("orders_queue_dlq", "msg-123", "orders_queue")
         >>> result = response.to_model()
         >>> if result.success:
         ...     print("Message requeued successfully")
@@ -1977,6 +1954,7 @@ class NzovuClient:
         ...     target_queue="manual_review_queue"
         ... )
         """
+        require_name(target_queue, "target_queue")
         try:
             request = request_response_pb2.RequeueFromDLQRequest(
                 dlq_name=dlq_name, message_id=message_id, target_queue=target_queue
@@ -2115,6 +2093,29 @@ class NzovuClient:
             logging.error(f"Error getting DLQ stats for {dlq_name}: {e.details()}")
             error = RpcOperationError(f"Failed to get DLQ stats due to: {e.details()}")
             self._handle_error(error, handler=error_handler)
+
+    def iter_pages(self, method: str, *args, max_pages=None, **kwargs):
+        """Yield one response per request; stop on exhaustion or max_pages."""
+        validate_page_iterator(method, max_pages)
+        params = (args[0] if args else kwargs.get("params")) if method == "peek_queue_messages" else None
+        token = params.page_token if params is not None else kwargs.get("page_token", "")
+        seen = {token}
+        count = 0
+        while max_pages is None or count < max_pages:
+            call_args, call_kwargs = page_call_arguments(method, args, kwargs, token)
+            response = getattr(self, method)(*call_args, **call_kwargs)
+            if response is None:
+                return
+            yield response
+            count += 1
+            if max_pages is not None and count >= max_pages:
+                return
+            token = response.to_proto().next_page_token
+            if not token:
+                return
+            if token in seen:
+                raise ValueError("Server repeated a pagination token")
+            seen.add(token)
 
     def get_active_heartbeat_count(self) -> int:
         """

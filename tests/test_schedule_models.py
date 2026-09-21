@@ -19,7 +19,7 @@ class TestSchedulePydanticModels(unittest.TestCase):
     def test_schedule_metadata_model(self):
         """Test ScheduleMetadata model creation."""
         metadata = models.ScheduleMetadata(
-            payload={"task": "test"},
+            payload={"data": {"task": "test"}},
             state="SCHEDULED",
             cron_schedule="0 0 * * *",
             queue_name="test_queue",
@@ -36,7 +36,7 @@ class TestSchedulePydanticModels(unittest.TestCase):
     def test_schedule_model(self):
         """Test Schedule model creation."""
         metadata = models.ScheduleMetadata(
-            payload={"task": "test"},
+            payload={"data": {"task": "test"}},
             state="SCHEDULED",
             cron_schedule="0 0 * * *",
             queue_name="test_queue",
@@ -78,7 +78,7 @@ class TestSchedulePydanticModels(unittest.TestCase):
         self.assertEqual(schedule.metadata.cron_schedule, "0 0 * * *")
         self.assertEqual(schedule.metadata.queue_name, "reports_queue")
         self.assertEqual(schedule.metadata.priority, 5)
-        self.assertEqual(schedule.metadata.payload, {"task": "daily_report"})
+        self.assertEqual(schedule.metadata.payload.data, {"task": "daily_report"})
 
     def test_create_schedule_response_from_proto(self):
         """Test CreateScheduleResponse.from_proto conversion."""
@@ -152,7 +152,7 @@ class TestSchedulePydanticModels(unittest.TestCase):
 
     def test_delete_schedule_response_from_proto(self):
         """Test DeleteScheduleResponse.from_proto conversion."""
-        response_proto = request_response_pb2.DeleteScheduleResponse()
+        response_proto = request_response_pb2.DeleteScheduleResponse(success=True)
 
         # Convert to Pydantic model
         response = models.DeleteScheduleResponse.from_proto(response_proto)
@@ -161,7 +161,7 @@ class TestSchedulePydanticModels(unittest.TestCase):
 
     def test_pause_schedule_response_from_proto(self):
         """Test PauseScheduleResponse.from_proto conversion."""
-        response_proto = request_response_pb2.PauseScheduleResponse()
+        response_proto = request_response_pb2.PauseScheduleResponse(success=True)
 
         # Convert to Pydantic model
         response = models.PauseScheduleResponse.from_proto(response_proto)
@@ -170,7 +170,7 @@ class TestSchedulePydanticModels(unittest.TestCase):
 
     def test_resume_schedule_response_from_proto(self):
         """Test ResumeScheduleResponse.from_proto conversion."""
-        response_proto = request_response_pb2.ResumeScheduleResponse()
+        response_proto = request_response_pb2.ResumeScheduleResponse(success=True)
 
         # Convert to Pydantic model
         response = models.ResumeScheduleResponse.from_proto(response_proto)
