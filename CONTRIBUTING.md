@@ -58,3 +58,12 @@ Package version starts at `0.0.1.dev0`; old source-package tags are not new SDK
 releases. Publishing workflows and Make targets remain disabled until SDK-PR5.
 See [migration status](docs/MIGRATION_STATUS.md) for remaining contract work and
 [bootstrap baseline](docs/MIGRATION_BASELINE.md) for inherited validation results.
+
+## Authenticated ownership gate
+
+`make check-live-ownership NZOVU_SERVER_BINARY=/absolute/path/to/nzovu` runs
+both clients against temporary SQLite TLS/mTLS servers. Build the pinned server
+with `CGO_ENABLED=1 go build -tags sqlite`; OpenSSL supplies test certificates.
+See [authentication and ownership](docs/AUTH_OWNERSHIP.md) for Docker execution,
+explicit claims, deadlines and worker limits. Normal unit runs skip these live
+cases; execute this gate separately before approving transport/lifecycle changes.

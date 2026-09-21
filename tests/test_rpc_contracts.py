@@ -9,6 +9,7 @@ from nzovu import AsyncNzovuClient, NzovuClient, models
 from nzovu.api.queueservice.v1 import request_response_pb2 as rpc
 from nzovu.api.queueservice.v1 import service_pb2
 from nzovu.exceptions import RpcOperationError
+from nzovu.heartbeat import AsyncHeartbeats, SyncHeartbeats
 from nzovu.utils import (
     AcknowledgeMessageParams,
     MessageState,
@@ -198,8 +199,7 @@ def make_client(asynchronous):
     client = object.__new__(AsyncNzovuClient if asynchronous else NzovuClient)
     client.stub = AsyncMock() if asynchronous else Mock()
     client._worker_id = "default-worker"
-    client._heartbeat_control = {}
-    client._heartbeat_stop_events = {}
+    client._heartbeats = (AsyncHeartbeats if asynchronous else SyncHeartbeats)(20, 300, 1000, 1, None, None)
     return client
 
 
@@ -249,6 +249,9 @@ class FailedRpc(grpc.RpcError):
     def code(self):
         return grpc.StatusCode.INVALID_ARGUMENT
 
+    def trailing_metadata(self):
+        return (("grpc-status-details-bin", b"detail"),)
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("asynchronous", [False, True])
@@ -256,10 +259,13 @@ class FailedRpc(grpc.RpcError):
 async def test_every_rpc_propagates_errors_and_invokes_handler(asynchronous, rpc_name, method, kwargs, expected):
     client = make_client(asynchronous)
     getattr(client.stub, rpc_name).side_effect = FailedRpc()
-    with pytest.raises(RpcOperationError, match="server rejected request"):
+    with pytest.raises(RpcOperationError, match="server rejected request") as raised:
         result = getattr(client, method)(**kwargs)
         if asynchronous:
             await result
+    assert raised.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    assert raised.value.details() == "server rejected request"
+    assert raised.value.trailing_metadata() == (("grpc-status-details-bin", b"detail"),)
     handler = Mock()
     result = getattr(client, method)(**kwargs, error_handler=handler)
     if asynchronous:
@@ -267,6 +273,8 @@ async def test_every_rpc_propagates_errors_and_invokes_handler(asynchronous, rpc
     assert result is None
     handler.assert_called_once()
     assert isinstance(handler.call_args.args[0], RpcOperationError)
+    assert handler.call_args.args[0].code() == grpc.StatusCode.INVALID_ARGUMENT
+    assert handler.call_args.args[0].trailing_metadata() == (("grpc-status-details-bin", b"detail"),)
 
 
 def populated_message(message):

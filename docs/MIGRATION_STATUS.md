@@ -1,22 +1,20 @@
 # SDK migration status
 
-SDK-PR0 bootstrap, SDK-PR1 identity/protocol migration and SDK-PR2 API/model
-contracts are complete.
-Local unit, type, style, generation and installed-artifact gates pass.
-The SDK still requires SDK-PR3 authentication/worker lifecycle work and live release
-validation before publication.
+SDK-PR0 through SDK-PR3 are complete. Local unit, type, style, generation,
+installed-artifact and live TLS/mTLS ownership gates pass. Broader SDK-PR4
+compatibility/examples and SDK-PR5 release gates remain before publication.
 
 ## Repository and review state
 
 The independent repository preserves all 79 source commits, including
-`843f46e424300fcd3bc1d1706cd1d30d1cd683de`. Local `main` identifies that
-baseline, now pushed to `adrien19/nzovu-sdk-python` as its initial `main`.
+`843f46e424300fcd3bc1d1706cd1d30d1cd683de`, which seeded the new repository.
+SDK-PR0 and SDK-PR1 are now merged into `main` at `a7f402a`.
 GitHub's default branch is verified as `main`. No release tags or publication
 have occurred.
 
 SDK-PR0 is commit `9abde03` on `migration/sdk-pr0-bootstrap`.
-SDK-PR1 follows it on `migration/sdk-pr1-identity-protocol`; review PR1 against
-the PR0 branch until PR0 is merged. See [bootstrap results](MIGRATION_BASELINE.md).
+SDK-PR1 is `dce1417` on `migration/sdk-pr1-identity-protocol`. SDK-PR2 branches
+from merged `main`; SDK-PR3 stacks on SDK-PR2. See [bootstrap results](MIGRATION_BASELINE.md).
 
 ## SDK-PR1 changes
 
@@ -74,7 +72,8 @@ suppressions or expected-failure markers were added.
 
 ## SDK-PR2 completion
 
-Branch: `migration/sdk-pr2-api-contracts`, based on SDK-PR1 `dce1417`.
+Branch: `migration/sdk-pr2-api-contracts`, commit `8d63e8c`, based on merged
+`main` at `a7f402a`.
 All 31 wrappers have matching sync/async parameters, encoded-request assertions,
 error/handler checks and response models. Populated-response tests verify every
 nested protocol field; see [API contracts](API_CONTRACTS.md) for the public API.
@@ -103,10 +102,50 @@ inferred Pydantic availability from importing SDK fallback classes; they now tes
 the actual availability flag. All RPCs still run in the base-install suite and
 verify that typed conversion reports the missing extra.
 
-The inherited schema-field shadowing warning remains. Hosted CI, the other
-advertised Python versions and live server scenarios have not been run here.
-SDK-PR3 ownership/lifecycle and authentication, then SDK-PR4 live compatibility,
-remain release gates. SDK-PR2 introduced the request/response ownership fields;
-it does not yet fix automatic heartbeat claim isolation or failed-ACK cleanup.
+At SDK-PR2 completion, live server and ownership/lifecycle gates remained pending.
+SDK-PR2 introduced ownership fields; SDK-PR3 below implements heartbeat isolation
+and failed-ACK cleanup. The inherited schema-field shadowing warning remains.
 
 Local completion log: `/private/tmp/nzovu-sdk2-final-validation.log`.
+
+
+## SDK-PR3 completion
+
+Branch: `migration/sdk-pr3-auth-ownership`, stacked on SDK-PR2. See
+[authentication and ownership](AUTH_OWNERSHIP.md) for the new public contracts
+and repeatable live gate.
+
+- Shared sync/async authenticated transport; port 9000, verified TLS, optional
+  mTLS, explicit plaintext, API-key metadata and RPC deadlines.
+- Immutable claims retained without heartbeat; exact ownership required for
+  ACK/heartbeat/renewal. gRPC codes, details, causes and trailing metadata survive.
+- Bounded admission before claiming; workers isolated by complete claim;
+  failed ACK retains heartbeat; stale cleanup cannot remove replacement attempts.
+- Interruptible retry backoff, bounded RPC deadlines, cancellation and joined
+  shutdown. Active-only observability prevents unbounded completed-worker history.
+- Live validation identified that renewal `FAILED_PRECONDITION` can mean the
+  extension/renewal limit, without ownership loss. That error retains heartbeat;
+  both unit and real-server regressions verify successful later ACK.
+
+Validation on Linux ARM64/Python 3.12.14, with a locally built Darwin ARM64
+SQLite server at pinned commit `f21477ecab47197f0c8c92dbdde2aab11ef02600`:
+
+| Check | Result |
+| --- | --- |
+| Unit/loopback suite with Pydantic | 550 passed; 1 base-only and 24 opt-in live cases skipped |
+| Installed wheel without Pydantic | 472 passed; 79 typed-only and 24 live cases skipped |
+| Separate real Nzovu TLS/mTLS gate | 24 passed, both clients |
+| All 31 methods preserve status/details and custom handlers | Passed |
+| Flake8 / Black / isort / Mypy / protocol drift | Passed |
+| Wheel/sdist and isolated base/extra artifact checks | Passed |
+| Workflow syntax and diff whitespace | Passed |
+
+Live cases cover accepted/rejected API keys and TLS credentials, authenticated
+background heartbeat, successful/rejected ACK, duplicate IDs across queues,
+lease expiry/reclaim, stale-owner rejection and renewal limits. Unit cases also
+cover retry recovery, saturation, cancellation and no orphan heartbeat work.
+
+Logs: `/private/tmp/nzovu-sdk3-final-validation.log` and
+`/private/tmp/nzovu-sdk3-live5.log`. Hosted CI, PostgreSQL, other advertised
+Python versions and the full live RPC matrix remain SDK-PR4 validation work.
+No package publication, release tags or default-branch push is part of PR2/PR3.

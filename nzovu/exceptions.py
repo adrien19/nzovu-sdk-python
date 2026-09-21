@@ -17,6 +17,18 @@ class InitializationError(NzovuError):
 
 
 class RpcOperationError(NzovuError):
-    """Raised when there's an error performing an RPC operation."""
+    """RPC failure retaining its original gRPC status and metadata."""
 
-    pass
+    def __init__(self, message, *, cause=None):
+        super().__init__(message)
+        self.__cause__ = cause
+        self.rpc_error = cause
+
+    def code(self):
+        return self.rpc_error.code() if self.rpc_error is not None else None
+
+    def details(self):
+        return self.rpc_error.details() if self.rpc_error is not None else str(self)
+
+    def trailing_metadata(self):
+        return self.rpc_error.trailing_metadata() if self.rpc_error is not None else None

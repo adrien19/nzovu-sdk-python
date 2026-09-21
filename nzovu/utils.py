@@ -23,6 +23,7 @@ from .api.queueservice.v1.request_response_pb2 import (  # type: ignore[attr-def
     PostMessagesBulkRequest,
 )
 from .api.schedule.v1.schedule_pb2 import CalendarSchedule, Schedule  # type: ignore[attr-defined]
+from .ownership import Claim
 
 # Import Pydantic models (will handle if not available)
 try:
@@ -153,9 +154,9 @@ class TlsConfig:
         client_key_path (str): Path to the client's private key.
     """
 
-    ca_path: str
-    client_crt_path: str
-    client_key_path: str
+    ca_path: Optional[str] = None
+    client_crt_path: Optional[str] = None
+    client_key_path: Optional[str] = None
 
 
 class MessageState(Enum):
@@ -797,6 +798,7 @@ class ResponseWrapper:
         """
         Initializes the ResponseWrapper with the provided protobuf response and converter function.
         """
+        self.claim: Optional[Claim] = None
         self._response_protobuf = response_protobuf
         self._converter_func = converter_func
 

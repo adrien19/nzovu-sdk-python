@@ -3,7 +3,7 @@
 SDK-PR2 aligns the 31 synchronous/asynchronous RPC wrappers and optional response
 models with the pinned server protocol. Protocol sources are unchanged from PR1.
 The server revision is `f21477ecab47197f0c8c92dbdde2aab11ef02600`.
-Authentication and automatic worker lifecycle changes belong to SDK-PR3; live
+See [authentication and ownership](AUTH_OWNERSHIP.md) for SDK-PR3 transport/worker behavior; broader live
 server compatibility testing remains the SDK-PR4 release gate.
 
 ## Requests
