@@ -7,7 +7,7 @@ Basic Usage (Synchronous):
     >>> from nzovu import NzovuClient
     >>> from nzovu.utils import PostMessageParams
     >>>
-    >>> client = NzovuClient(host='localhost', port=50051, use_tls=False)
+    >>> client = NzovuClient(host='localhost', port=9000, use_tls=False)
     >>> client.create_queue(name="my_queue")
     >>> params = PostMessageParams(message_id="123", data={"key": "value"}, queue_name="my_queue")
     >>> response = client.post_message(params)
@@ -17,14 +17,14 @@ Basic Usage (Synchronous):
 
 Async Usage:
     >>> import asyncio
-    >>> from nzovu import AsyncNzovuClient
-    >>> from nzovu.utils import PostMessageParams
+    >>> from nzovu import AsyncNzovuClient, MessageState
     >>>
     >>> async def main():
-    ...     async with AsyncNzovuClient(host='localhost', port=50051, use_tls=False) as client:
+    ...     async with AsyncNzovuClient(host='localhost', port=9000, use_tls=False) as client:
     ...         msg = await client.get_next_message("queue", "5m", enable_heartbeat=True)
     ...         # Process message...
-    ...         await client.acknowledge_message(params)
+    ...         if msg.claim is not None:
+    ...             await client.acknowledge_message(msg.claim.acknowledge(MessageState.COMPLETED))
     >>> asyncio.run(main())
 
 For more information, see the documentation at:
@@ -36,6 +36,8 @@ from importlib.metadata import PackageNotFoundError, version
 from .async_client import AsyncNzovuClient
 from .client import NzovuClient
 from .exceptions import InitializationError, RpcOperationError
+from .heartbeat import HeartbeatCapacityError
+from .ownership import Claim
 from .utils import (
     AcknowledgeMessageParams,
     Header,
@@ -114,6 +116,8 @@ try:
     __all__ = [
         # Clients
         "NzovuClient",
+        "Claim",
+        "HeartbeatCapacityError",
         "AsyncNzovuClient",
         # Utils and params
         "TlsConfig",
@@ -196,6 +200,8 @@ except ImportError:
     __all__ = [
         # Clients
         "NzovuClient",
+        "Claim",
+        "HeartbeatCapacityError",
         "AsyncNzovuClient",
         # Utils and params
         "TlsConfig",

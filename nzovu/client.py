@@ -1,21 +1,17 @@
 import logging
-import os
-import threading
-import time
-from collections import deque
-from concurrent.futures import ThreadPoolExecutor
-from random import randint
 from typing import Callable, Dict, Optional
 
 import grpc
 from google.protobuf import json_format
 from google.protobuf.duration_pb2 import Duration
 
-from .api.message.v1.message_pb2 import Message
 from .api.queue.v1 import queue_pb2
 from .api.queueservice.v1 import request_response_pb2, service_pb2_grpc
 from .api.schedule.v1 import schedule_pb2
-from .exceptions import InitializationError, RpcOperationError
+from .exceptions import RpcOperationError
+from .heartbeat import OWNERSHIP_LOST, SyncHeartbeats
+from .ownership import Claim
+from .transport import RpcOptions, create_channel
 from .utils import (
     AcknowledgeMessageParams,
     MessageState,
@@ -74,7 +70,7 @@ class NzovuClient:
     Examples:
     --------
     # Initialize the client for a secure connection
-    >>> client = NzovuClient(host="localhost", port=50051, use_tls=True, tls_config=my_tls_config)
+    >>> client = NzovuClient(host="localhost", port=9000, use_tls=True, tls_config=my_tls_config)
 
     # Create a new queue
     >>> client.create_queue(CreateQueueParams(name="my_new_queue"))
@@ -87,7 +83,7 @@ class NzovuClient:
     def __init__(
         self,
         host: str,
-        port: int,
+        port: int = 9000,
         use_tls=True,
         tls_config: Optional[TlsConfig] = None,
         worker_id: str = "",
@@ -95,6 +91,10 @@ class NzovuClient:
         heartbeat_max_count: int = 1000000000,  # Large number to effectively disable count limit
         heartbeat_thread_pool_size: int = 20,
         heartbeat_error_callback: Optional[Callable] = None,
+        *,
+        api_key: Optional[str] = None,
+        rpc_timeout: Optional[float] = None,
+        heartbeat_interval: float = 1.0,
     ):
         """
         Initialize the NzovuClient.
@@ -113,7 +113,7 @@ class NzovuClient:
             Indicates whether to use TLS for the connection, by default True.
         tls_config : TlsConfig, optional
             Configuration for TLS connectivity, providing paths to CA, client certificate,
-            and client key. Required if `use_tls` is True, by default None.
+            and client key. Optional: system trust roots are used when omitted; client certificates enable mTLS.
         worker_id : str, optional
             A stable identifier for this worker/client instance. Used to track message processing
             and validate heartbeats and acknowledgments. If not provided, each get_next_message
@@ -131,56 +131,29 @@ class NzovuClient:
         Raises:
         ------
         InitializationError
-            If `use_tls` is True but `tls_config` is not provided or the file paths within
-            `tls_config` do not exist.
+            If authentication, deadline or TLS credential files are invalid.
         """
         self.host = host
         self.port = port
         self._use_tls = use_tls
         self._tls_config = tls_config
+        self._rpc_options = RpcOptions(api_key=api_key, timeout=rpc_timeout)
         self._worker_id = worker_id
         self._heartbeat_max_duration = heartbeat_max_duration
         self._heartbeat_max_count = heartbeat_max_count
         self._heartbeat_error_callback = heartbeat_error_callback
 
-        if self._use_tls:
-            if self._tls_config is None:
-                raise InitializationError("TLS is enabled but no TlsConfig provided")
-
-            # Type narrowing: at this point tls_config is not None
-            assert tls_config is not None
-
-            # Check for the existence of the files before trying to read them.
-            for path in [tls_config.ca_path, tls_config.client_crt_path, tls_config.client_key_path]:
-                if not os.path.exists(path):
-                    raise InitializationError(f"File {path} does not exist.")
-
-            with open(tls_config.ca_path, "rb") as f:
-                ca = f.read()
-            with open(tls_config.client_crt_path, "rb") as f:
-                client_crt = f.read()
-            with open(tls_config.client_key_path, "rb") as f:
-                client_key = f.read()
-            credentials = grpc.ssl_channel_credentials(ca, client_key, client_crt)
-            self.channel = grpc.secure_channel(f"{host}:{port}", credentials)
-        else:
-            self.channel = grpc.insecure_channel(f"{host}:{port}")
-        self.stub = service_pb2_grpc.QueueServiceStub(self.channel)
-
-        # New heartbeat management structures
-        self._active_heartbeats: Dict[str, dict] = {}
-        self._heartbeat_control: Dict[str, threading.Event] = {}
-        self._heartbeat_metrics: Dict[str, dict] = {}
-        self.lock = threading.Lock()
-
-        # Thread pool for concurrent heartbeat processing
-        self._heartbeat_executor = ThreadPoolExecutor(
-            max_workers=heartbeat_thread_pool_size, thread_name_prefix="nzovu-heartbeat"
+        self._heartbeats = SyncHeartbeats(
+            heartbeat_thread_pool_size,
+            heartbeat_max_duration,
+            heartbeat_max_count,
+            heartbeat_interval,
+            rpc_timeout,
+            heartbeat_error_callback,
         )
 
-        # Legacy compatibility - kept for backward compat but deprecated
-        self._heartbeat_data: deque = deque()
-        self._stop_heartbeat = threading.Event()
+        self.channel = create_channel(f"{self.host}:{self.port}", self._use_tls, self._tls_config, self._rpc_options)
+        self.stub = service_pb2_grpc.QueueServiceStub(self.channel)
 
     def _handle_error(self, error, handler=None):
         """Internal method to handle errors. Calls the custom error handler if set."""
@@ -271,7 +244,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error creating queue: {e.details()}")
-            error = RpcOperationError(f"Failed to create queue due to: {e.details()}")
+            error = RpcOperationError(f"Failed to create queue due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def delete_queue(self, name: str, error_handler=None) -> ResponseWrapper:
@@ -315,7 +288,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error deleting queue: {e.details()}")
-            error = RpcOperationError(f"Failed to delete queue due to: {e.details()}")
+            error = RpcOperationError(f"Failed to delete queue due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def list_queues(
@@ -353,7 +326,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error listing queues: {e.details()}")
-            error = RpcOperationError(f"Failed to list queues due to: {e.details()}")
+            error = RpcOperationError(f"Failed to list queues due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def post_message(self, msg_params: PostMessageParams, error_handler=None) -> ResponseWrapper:
@@ -402,7 +375,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error posting message: {e.details()}")
-            error = RpcOperationError(f"Failed to post message due to: {e.details()}")
+            error = RpcOperationError(f"Failed to post message due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def post_messages_bulk(
@@ -473,7 +446,7 @@ class NzovuClient:
 
         except grpc.RpcError as e:
             logging.error(f"Error posting messages in bulk: {e.details()}")
-            error = RpcOperationError(f"Failed to post messages in bulk due to: {e.details()}")
+            error = RpcOperationError(f"Failed to post messages in bulk due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
         except (ValueError, AttributeError, TypeError) as e:
             logging.error(f"Invalid parameters for bulk post: {e}")
@@ -485,399 +458,61 @@ class NzovuClient:
         queue_name: str,
         lease_duration: str,
         exclusivity_key: str = "",
-        enable_heartbeat=False,
+        enable_heartbeat: bool = False,
         error_handler=None,
         *,
         worker_id: Optional[str] = None,
         attempt_id: Optional[str] = None,
     ) -> ResponseWrapper:
+        """Claim a message; response.claim retains ownership even without automatic heartbeats.
+
+        Automatic heartbeats reserve capacity before claiming. Saturation raises
+        HeartbeatCapacityError without fetching an unprotected message.
         """
-        Retrieve the next message from a specified queue in the Nzovu service.
-
-        This method obtains the subsequent available message from a queue, making it
-        inaccessible to other consumers for a stipulated period (defined by the lease duration).
-        Optionally, the SDK can manage the message lease by automatically sending heartbeats
-        to the service, based on the `enable_heartbeat` parameter. In the event of errors
-        during message retrieval, custom or default error-handling mechanisms can be employed.
-
-        Parameters:
-        ----------
-        queue_name : str
-            The name of the queue from which to fetch the next message.
-
-        lease_duration : str
-            Duration (in seconds) to lease the message, during which it will be inaccessible to other consumers.
-
-        exclusivity_key : str, optional
-            An exclusive key required for queues of exclusive type, by default "".
-
-        enable_heartbeat : bool, optional
-            A flag to enable/disable the automatic sending of heartbeats for managing message leases, by default False.
-
-        error_handler : callable, optional
-            An optional custom function for error management during message retrieval. It should accept an error/exception
-            object as its parameter. If not provided, the SDK’s default error handling will be employed, by default None.
-
-        Returns:
-        -------
-        ResponseWrapper
-            A wrapper of the response from the Nzovu service, providing insights and details about the retrieved message.
-
-        Raises:
-        ------
-        RpcOperationError
-            If the gRPC operation fails and no custom error handler is set.
-
-        Example:
-        --------
-        >>> message = client.get_next_message(queue_name="my_queue", lease_duration="300").to_dict()  # To obtain a dictionary response
-        >>> message = client.get_next_message(queue_name="my_queue", lease_duration="300").to_proto()  # To obtain a grpc response
-
-        Notes:
-        -----
-        - Ensure `queue_name` corresponds to an existing and accessible queue in the Nzovu service.
-        - The `lease_duration` should be set considering the processing time required for a message to avoid early lease expiration.
-        - The `exclusivity_key` is pivotal when dealing with exclusive type queues and should be managed securely.
-        - Utilizing `enable_heartbeat` can be beneficial for maintaining the lease of long-processing messages and mitigating premature visibility.
-        """
+        self._heartbeats.ensure_open()
+        reserved = False
         try:
-            pb_release_duration: Duration = string_to_duration(lease_duration)
-
             request = request_response_pb2.GetNextMessageRequest(
                 queue_name=queue_name,
-                lease_duration=pb_release_duration,
+                lease_duration=string_to_duration(lease_duration),
                 exclusivity_key=exclusivity_key,
                 worker_id=self._worker_id if worker_id is None else worker_id,
                 attempt_id=attempt_id,
             )
-            response = self.stub.GetNextMessage(request)
-            response_wrapper = ResponseWrapper(response_protobuf=response)
-
             if enable_heartbeat:
-                resp_dict = response_wrapper.to_dict()
-                # Check for actual message presence - handle both possible response structures
-                message_id = resp_dict.get("messageId") or resp_dict.get("message", {}).get("messageId")
-
-                if message_id:
-                    logging.info(f"Starting heartbeat for message {message_id} on queue {queue_name}")
-
-                    # Extract attempt_id and worker_id for heartbeat tracking
-                    attempt_id = resp_dict.get("attemptId", "") or resp_dict.get("attempt_id", "")
-                    worker_id = resp_dict.get("workerId", "") or resp_dict.get("worker_id", "")
-
-                    max_reconnect_attempts = resp_dict.get("max_reconnect_attempts", 3)
-                    heartbeat_frequency = resp_dict.get("heartbeat_frequency", 1)
-
-                    if heartbeat_frequency:
-                        stop_event = threading.Event()
-
-                        with self.lock:
-                            # Check if heartbeat already exists for this message
-                            if message_id in self._active_heartbeats:
-                                logging.warning(f"Heartbeat already active for message {message_id}, skipping")
-                            else:
-                                self._heartbeat_control[message_id] = stop_event
-
-                                # Submit heartbeat task to thread pool
-                                future = self._heartbeat_executor.submit(
-                                    self.__send_heartbeat_for_message,
-                                    message_id=message_id,
-                                    queue_name=queue_name,
-                                    attempt_id=attempt_id,
-                                    worker_id=worker_id,
-                                    stop_event=stop_event,
-                                    heartbeat_frequency=heartbeat_frequency,
-                                    max_reconnect_attempts=max_reconnect_attempts,
-                                )
-
-                                self._active_heartbeats[message_id] = {
-                                    "future": future,
-                                    "queue_name": queue_name,
-                                    "started_at": time.time(),
-                                    "heartbeat_frequency": heartbeat_frequency,
-                                }
-
-                                self._heartbeat_metrics[message_id] = {
-                                    "message_id": message_id,
-                                    "queue_name": queue_name,
-                                    "started_at": time.time(),
-                                    "heartbeats_sent": 0,
-                                    "heartbeats_failed": 0,
-                                    "last_heartbeat_at": None,
-                                    "last_error": None,
-                                }
-                else:
-                    logging.debug(f"No message returned from queue {queue_name}, heartbeat not started")
-
-            return response_wrapper
+                self._heartbeats.reserve()
+                reserved = True
+            response = self.stub.GetNextMessage(request)
+            wrapped = ResponseWrapper(response_protobuf=response)
+            wrapped.claim = Claim.from_response(queue_name, response)
+            if enable_heartbeat and wrapped.claim is not None:
+                self._heartbeats.start(wrapped.claim, self.stub)
+                reserved = False
+            return wrapped
         except grpc.RpcError as e:
-            logging.error(f"Error getting next message: {e.details()}")
-            error = RpcOperationError(f"Failed to get next message due to: {e.details()}")
-            self._handle_error(error, handler=error_handler)
-
-    def __send_heartbeat_for_message(
-        self,
-        message_id: str,
-        queue_name: str,
-        attempt_id: str,
-        worker_id: str,
-        stop_event: threading.Event,
-        heartbeat_frequency: int,
-        max_reconnect_attempts: int,
-    ):
-        """
-        Send heartbeats for a single message in a dedicated thread.
-
-        This method manages heartbeats for an individual message, sending periodic heartbeat
-        requests to the Nzovu service to maintain the message lease. It runs until:
-        1. The stop_event is set (e.g., when message is acknowledged)
-        2. The server returns a non-RUNNING state
-        3. Maximum duration or count is exceeded
-        4. Unrecoverable errors occur
-
-        Parameters:
-        ----------
-        message_id : str
-            The unique identifier of the message.
-        queue_name : str
-            The name of the queue containing the message.
-        attempt_id : str
-            The attempt ID for the current message processing attempt.
-        worker_id : str
-            The worker ID processing this message.
-        stop_event : threading.Event
-            Event to signal when heartbeat should stop.
-        heartbeat_frequency : int
-            Interval in seconds between heartbeats.
-        max_reconnect_attempts : int
-            Maximum retry attempts for transient errors.
-
-        Note:
-        ----
-        This method runs in a background thread pool and should not be called directly.
-        It automatically cleans up tracking structures when it exits.
-        """
-        start_time = time.time()
-        heartbeat_count = 0
-        reconnect_attempts = 0
-
-        logging.info(f"Heartbeat thread started for message {message_id} on queue {queue_name}")
-
-        try:
-            while not stop_event.is_set():
-                # Safety check 1: Maximum duration
-                elapsed = time.time() - start_time
-                if elapsed > self._heartbeat_max_duration:
-                    logging.warning(
-                        f"Heartbeat for message {message_id} exceeded max duration "
-                        f"{self._heartbeat_max_duration}s (elapsed: {elapsed:.1f}s)"
-                    )
-                    break
-
-                # Safety check 2: Maximum count
-                if heartbeat_count >= self._heartbeat_max_count:
-                    logging.warning(
-                        f"Heartbeat for message {message_id} exceeded max count "
-                        f"{self._heartbeat_max_count} (sent: {heartbeat_count})"
-                    )
-                    break
-
-                try:
-                    heartbeat_request = request_response_pb2.SendMessageHeartBeatRequest(
-                        queue_name=queue_name,
-                        message_id=message_id,
-                        attempt_id=attempt_id,
-                        worker_id=worker_id,
-                    )
-                    heartbeat_resp = self.stub.SendMessageHeartBeat(heartbeat_request)
-
-                    heartbeat_count += 1
-                    reconnect_attempts = 0  # Reset on success
-
-                    # Update metrics
-                    with self.lock:
-                        if message_id in self._heartbeat_metrics:
-                            self._heartbeat_metrics[message_id]["heartbeats_sent"] = heartbeat_count
-                            self._heartbeat_metrics[message_id]["last_heartbeat_at"] = time.time()
-
-                    logging.debug(
-                        f"Heartbeat #{heartbeat_count} sent for message {message_id}, "
-                        f"state: {Message.Metadata.State.Name(heartbeat_resp.state)}"
-                    )
-
-                    # Check if message is no longer running
-                    if heartbeat_resp.state != Message.Metadata.State.RUNNING:
-                        logging.info(
-                            f"Message {message_id} no longer RUNNING "
-                            f"(state: {Message.Metadata.State.Name(heartbeat_resp.state)}), stopping heartbeat"
-                        )
-                        break
-
-                    # Interruptible sleep - allows quick stop on event
-                    stop_event.wait(timeout=heartbeat_frequency)
-
-                except grpc.RpcError as e:
-                    reconnect_attempts += 1
-                    error_msg = f"Heartbeat error for message {message_id}: {e.details()}"
-
-                    # Update metrics
-                    with self.lock:
-                        if message_id in self._heartbeat_metrics:
-                            self._heartbeat_metrics[message_id]["heartbeats_failed"] += 1
-                            self._heartbeat_metrics[message_id]["last_error"] = str(e.details())
-
-                    if reconnect_attempts >= max_reconnect_attempts:
-                        logging.error(
-                            f"{error_msg}. Max reconnect attempts ({max_reconnect_attempts}) reached, stopping heartbeat"
-                        )
-
-                        # Notify via callback
-                        if self._heartbeat_error_callback:
-                            try:
-                                self._heartbeat_error_callback(
-                                    {
-                                        "message_id": message_id,
-                                        "queue_name": queue_name,
-                                        "error": e,
-                                        "error_details": e.details(),
-                                        "timestamp": time.time(),
-                                        "retry_count": reconnect_attempts,
-                                        "heartbeats_sent": heartbeat_count,
-                                    }
-                                )
-                            except Exception as cb_error:
-                                logging.error(f"Error in heartbeat error callback: {cb_error}")
-                        break
-                    else:
-                        logging.warning(f"{error_msg}. Retry {reconnect_attempts}/{max_reconnect_attempts}")
-                        # Exponential backoff with jitter
-                        backoff_time = (2**reconnect_attempts) + randint(1, 10)
-                        stop_event.wait(timeout=backoff_time)
-
-        except Exception as e:
-            logging.error(f"Unexpected error in heartbeat thread for message {message_id}: {e}", exc_info=True)
-
-            # Notify via callback
-            if self._heartbeat_error_callback:
-                try:
-                    self._heartbeat_error_callback(
-                        {
-                            "message_id": message_id,
-                            "queue_name": queue_name,
-                            "error": e,
-                            "error_details": str(e),
-                            "timestamp": time.time(),
-                            "retry_count": reconnect_attempts,
-                            "heartbeats_sent": heartbeat_count,
-                        }
-                    )
-                except Exception as cb_error:
-                    logging.error(f"Error in heartbeat error callback: {cb_error}")
+            self._handle_error(RpcOperationError(f"Failed to get next message: {e.details()}", cause=e), error_handler)
         finally:
-            # Cleanup - remove from tracking structures
-            with self.lock:
-                self._active_heartbeats.pop(message_id, None)
-                self._heartbeat_control.pop(message_id, None)
-                # Keep metrics for observability, but mark as ended
-                if message_id in self._heartbeat_metrics:
-                    self._heartbeat_metrics[message_id]["ended_at"] = time.time()
-                    self._heartbeat_metrics[message_id]["total_heartbeats"] = heartbeat_count
-
-            logging.info(
-                f"Heartbeat thread stopped for message {message_id}. "
-                f"Total heartbeats sent: {heartbeat_count}, "
-                f"Duration: {time.time() - start_time:.1f}s"
-            )
-
-    def __manage_heartbeats(self):
-        """
-        DEPRECATED: Legacy heartbeat manager method.
-
-        This method is kept for backward compatibility but is no longer used.
-        The new implementation uses __send_heartbeat_for_message with a thread pool.
-        """
-        logging.warning("Legacy __manage_heartbeats called - this method is deprecated")
-        while self._heartbeat_data and not self._stop_heartbeat.is_set():
-            item = self._heartbeat_data.popleft()
-            reconnect_attempts = 0
-            if not isinstance(item, dict):
-                logging.error(f"Unexpected item in heartbeat_data: {item}")
-                continue
-            while reconnect_attempts < item.get("max_reconnect_attempts", 3):
-                try:
-                    heartbeat_request = request_response_pb2.SendMessageHeartBeatRequest(
-                        queue_name=item.get("queue_name"), message_id=item.get("message_id")
-                    )
-                    heartbeat_resp = self.stub.SendMessageHeartBeat(heartbeat_request)
-                    if heartbeat_resp.state != Message.Metadata.State.RUNNING:
-                        break
-                    time.sleep(item.get("heartbeat_frequency", 1))
-                    reconnect_attempts = 0
-                except grpc.RpcError as e:
-                    reconnect_attempts += 1
-                    backoff_time = (2**reconnect_attempts) + randint(1, 10)
-                    logging.warning(f"Reconnection attempt {reconnect_attempts} failed: {e.details()}")
-                    time.sleep(backoff_time)
+            if reserved:
+                self._heartbeats.release()
 
     def acknowledge_message(self, params: AcknowledgeMessageParams, error_handler=None) -> ResponseWrapper:
-        """
-        Acknowledges a message in the Nzovu service.
-
-        This method allows users to acknowledge a previously fetched message, indicating that the message
-        has been processed successfully or requires a change in its state. If the method encounters an error,
-        it can be handled using a custom error handler or the SDK's default mechanism.
-
-        Parameters:
-        ----------
-        params : AcknowledgeMessageParams
-            Contains the parameters required to acknowledge the message.
-            - `message_id` (str): The unique identifier for the message.
-            - `queue_name` (str): The name of the queue from which the message was fetched.
-            - `state` (MessageState): The new state for the message after acknowledgment.
-
-        error_handler : callable, optional
-            A custom error handling function that will be called if an error occurs during the operation.
-            The function should accept a single argument, which is the error/exception object.
-            If not provided, the SDK's default error handling mechanism will be used.
-
-        Returns:
-        -------
-        ResponseWrapper
-            A wrapper of the response from the Nzovu service, providing insights and details about the acknowledged message.
-
-        Raises:
-        ------
-        RpcOperationError
-            If the gRPC operation fails and no custom error handler is set.
-
-        Example:
-        --------
-        >>> from nzovusdk.utils import AcknowledgeMessageParams
-        >>> params = AcknowledgeMessageParams(message_id="12345", queue_name="my_queue", state=MessageState.COMPLETED)
-        >>> client.acknowledge_message(params)
-
-        """
+        """Acknowledge an explicit claim; stop its heartbeat only after confirmed success."""
+        claim = Claim(params.queue_name, params.message_id, params.worker_id, params.attempt_id)
         try:
-            # Stop heartbeat for this message if it's active
-            message_id = params.message_id
-            if message_id in self._heartbeat_control:
-                logging.info(f"Stopping heartbeat for acknowledged message {message_id}")
-                self._heartbeat_control[message_id].set()  # Signal stop
-
-            # Send the acknowledgment to Nzovu
-            ack_request = request_response_pb2.AcknowledgeMessageRequest(
-                message_id=params.message_id,
-                queue_name=params.queue_name,
+            request = request_response_pb2.AcknowledgeMessageRequest(
+                **claim.to_dict(),
                 state=params.state.name if isinstance(params.state, MessageState) else params.state,
-                worker_id=params.worker_id,
-                attempt_id=params.attempt_id,
             )
-            response = self.stub.AcknowledgeMessage(ack_request)
+            response = self.stub.AcknowledgeMessage(request)
+            if response.success:
+                self._heartbeats.stop(claim)
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
-            logging.error(f"Error acknowledging message: {e.details()}")
-            error = RpcOperationError(f"Failed to acknowlege message due to: {e.details()}")
-            self._handle_error(error, handler=error_handler)
+            if e.code() in OWNERSHIP_LOST:
+                self._heartbeats.stop(claim)
+            self._handle_error(
+                RpcOperationError(f"Failed to acknowledge message: {e.details()}", cause=e), error_handler
+            )
 
     def cancel_message(self, queue_name: str, message_id: str, reason: str = "", error_handler=None) -> ResponseWrapper:
         """
@@ -923,7 +558,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error cancelling message: {e.details()}")
-            error = RpcOperationError(f"Failed to cancel message due to: {e.details()}")
+            error = RpcOperationError(f"Failed to cancel message due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def renew_message_lease(
@@ -985,6 +620,7 @@ class NzovuClient:
         processing conflicts and ensure the reliable operation of your application.
 
         """
+        claim = Claim(queue_name, message_id, worker_id or "", attempt_id or "")
         try:
             pb_release_duration: Duration = string_to_duration(new_lease_duration)
 
@@ -998,8 +634,11 @@ class NzovuClient:
             response = self.stub.RenewMessageLease(request)
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
+            # FAILED_PRECONDITION can mean an extension limit, while ownership remains valid.
+            if e.code() in {grpc.StatusCode.NOT_FOUND, grpc.StatusCode.PERMISSION_DENIED}:
+                self._heartbeats.stop(claim)
             logging.error(f"Error renewing message lease: {e.details()}")
-            error = RpcOperationError(f"Failed to renew message lease due to: {e.details()}")
+            error = RpcOperationError(f"Failed to renew message lease due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def peek_queue_messages(self, params: PeekQueueMessagesParams, error_handler=None) -> ResponseWrapper:
@@ -1042,7 +681,7 @@ class NzovuClient:
 
         Example:
         --------
-        >>> from nzovusdk.utils import PeekQueueMessagesParams
+        >>> from nzovu.utils import PeekQueueMessagesParams
         >>> params = PeekQueueMessagesParams(queue_name="my_queue", page_size=10, priority=5)
         >>> client.peek_queue_messages(params)
 
@@ -1065,7 +704,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error peeking queue messages: {e.details()}")
-            error = RpcOperationError(f"Failed to peek queue due to: {e.details()}")
+            error = RpcOperationError(f"Failed to peek queue due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def get_queue_state(self, queue_name, error_handler=None) -> ResponseWrapper:
@@ -1110,7 +749,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error getting queue state: {e.details()}")
-            error = RpcOperationError(f"Failed to get queue state due to: {e.details()}")
+            error = RpcOperationError(f"Failed to get queue state due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def send_message_heartbeat(
@@ -1163,6 +802,7 @@ class NzovuClient:
         >>> client.send_message_heartbeat(queue_name="my_queue", message_id="12345", attempt_id="attempt-1", worker_id="worker-1")
 
         """
+        claim = Claim(queue_name, message_id, worker_id or "", attempt_id or "")
         try:
             request = request_response_pb2.SendMessageHeartBeatRequest(
                 queue_name=queue_name,
@@ -1173,8 +813,10 @@ class NzovuClient:
             response = self.stub.SendMessageHeartBeat(request)
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
+            if e.code() in OWNERSHIP_LOST:
+                self._heartbeats.stop(claim)
             logging.error(f"Error sending heartbeat for message {message_id}: {e.details()}")
-            error = RpcOperationError(f"Failed to send heartbeat due to: {e.details()}")
+            error = RpcOperationError(f"Failed to send heartbeat due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     # Schedule Operations
@@ -1227,7 +869,7 @@ class NzovuClient:
 
         except grpc.RpcError as e:
             logging.error(f"Error creating schedule {schedule_id}: {e.details()}")
-            error = RpcOperationError(f"Failed to create schedule due to: {e.details()}")
+            error = RpcOperationError(f"Failed to create schedule due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def delete_schedule(self, schedule_id: str, error_handler=None) -> ResponseWrapper:
@@ -1265,7 +907,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error deleting schedule {schedule_id}: {e.details()}")
-            error = RpcOperationError(f"Failed to delete schedule due to: {e.details()}")
+            error = RpcOperationError(f"Failed to delete schedule due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def get_schedule(self, schedule_id: str, error_handler=None) -> ResponseWrapper:
@@ -1304,7 +946,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error getting schedule {schedule_id}: {e.details()}")
-            error = RpcOperationError(f"Failed to get schedule due to: {e.details()}")
+            error = RpcOperationError(f"Failed to get schedule due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def list_schedules(
@@ -1354,7 +996,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error listing schedules: {e.details()}")
-            error = RpcOperationError(f"Failed to list schedules due to: {e.details()}")
+            error = RpcOperationError(f"Failed to list schedules due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def get_schedule_history(
@@ -1404,7 +1046,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error getting schedule history for {schedule_id}: {e.details()}")
-            error = RpcOperationError(f"Failed to get schedule history due to: {e.details()}")
+            error = RpcOperationError(f"Failed to get schedule history due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def pause_schedule(self, schedule_id: str, error_handler=None) -> ResponseWrapper:
@@ -1442,7 +1084,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error pausing schedule {schedule_id}: {e.details()}")
-            error = RpcOperationError(f"Failed to pause schedule due to: {e.details()}")
+            error = RpcOperationError(f"Failed to pause schedule due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def resume_schedule(self, schedule_id: str, error_handler=None) -> ResponseWrapper:
@@ -1480,7 +1122,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error resuming schedule {schedule_id}: {e.details()}")
-            error = RpcOperationError(f"Failed to resume schedule due to: {e.details()}")
+            error = RpcOperationError(f"Failed to resume schedule due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def validate_calendar_schedule(self, calendar_schedule: dict, error_handler=None) -> ResponseWrapper:
@@ -1524,7 +1166,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error validating calendar schedule: {e.details()}")
-            error = RpcOperationError(f"Failed to validate calendar schedule due to: {e.details()}")
+            error = RpcOperationError(f"Failed to validate calendar schedule due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def preview_calendar_schedule(
@@ -1576,7 +1218,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error previewing calendar schedule: {e.details()}")
-            error = RpcOperationError(f"Failed to preview calendar schedule due to: {e.details()}")
+            error = RpcOperationError(f"Failed to preview calendar schedule due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     # Schema Operations
@@ -1638,7 +1280,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error registering schema {schema_id}: {e.details()}")
-            error = RpcOperationError(f"Failed to register schema due to: {e.details()}")
+            error = RpcOperationError(f"Failed to register schema due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def get_schema(self, schema_id: str, version: int = 0, error_handler=None) -> ResponseWrapper:
@@ -1685,7 +1327,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error getting schema {schema_id}: {e.details()}")
-            error = RpcOperationError(f"Failed to get schema due to: {e.details()}")
+            error = RpcOperationError(f"Failed to get schema due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def list_schemas(
@@ -1750,7 +1392,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error listing schemas: {e.details()}")
-            error = RpcOperationError(f"Failed to list schemas due to: {e.details()}")
+            error = RpcOperationError(f"Failed to list schemas due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def delete_schema(self, schema_id: str, version: int = 0, error_handler=None) -> ResponseWrapper:
@@ -1795,7 +1437,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error deleting schema {schema_id}: {e.details()}")
-            error = RpcOperationError(f"Failed to delete schema due to: {e.details()}")
+            error = RpcOperationError(f"Failed to delete schema due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def validate_payload(self, schema_id: str, payload: str, version: int = 0, error_handler=None) -> ResponseWrapper:
@@ -1847,7 +1489,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error validating payload against schema {schema_id}: {e.details()}")
-            error = RpcOperationError(f"Failed to validate payload due to: {e.details()}")
+            error = RpcOperationError(f"Failed to validate payload due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     # Dead Letter Queue Operations
@@ -1903,7 +1545,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error getting DLQ messages from {dlq_name}: {e.details()}")
-            error = RpcOperationError(f"Failed to get DLQ messages due to: {e.details()}")
+            error = RpcOperationError(f"Failed to get DLQ messages due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def requeue_from_dlq(
@@ -1963,7 +1605,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error requeuing message {message_id} from DLQ {dlq_name}: {e.details()}")
-            error = RpcOperationError(f"Failed to requeue from DLQ due to: {e.details()}")
+            error = RpcOperationError(f"Failed to requeue from DLQ due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def delete_from_dlq(self, dlq_name: str, message_id: str, error_handler=None) -> ResponseWrapper:
@@ -2007,7 +1649,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error deleting message {message_id} from DLQ {dlq_name}: {e.details()}")
-            error = RpcOperationError(f"Failed to delete from DLQ due to: {e.details()}")
+            error = RpcOperationError(f"Failed to delete from DLQ due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def purge_dlq(self, dlq_name: str, error_handler=None) -> ResponseWrapper:
@@ -2049,7 +1691,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error purging DLQ {dlq_name}: {e.details()}")
-            error = RpcOperationError(f"Failed to purge DLQ due to: {e.details()}")
+            error = RpcOperationError(f"Failed to purge DLQ due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def get_dlq_stats(self, dlq_name: str, error_handler=None) -> ResponseWrapper:
@@ -2091,7 +1733,7 @@ class NzovuClient:
             return ResponseWrapper(response_protobuf=response)
         except grpc.RpcError as e:
             logging.error(f"Error getting DLQ stats for {dlq_name}: {e.details()}")
-            error = RpcOperationError(f"Failed to get DLQ stats due to: {e.details()}")
+            error = RpcOperationError(f"Failed to get DLQ stats due to: {e.details()}", cause=e)
             self._handle_error(error, handler=error_handler)
 
     def iter_pages(self, method: str, *args, max_pages=None, **kwargs):
@@ -2118,186 +1760,31 @@ class NzovuClient:
             seen.add(token)
 
     def get_active_heartbeat_count(self) -> int:
-        """
-        Get the number of messages with currently active heartbeats.
+        """Return a snapshot of active claim-scoped heartbeat workers."""
+        return len(self._heartbeats.snapshot())
 
-        Returns:
-        -------
-        int
-            The count of messages that have active heartbeat threads running.
+    def get_heartbeat_stats(self) -> Dict[Claim, dict]:
+        """Return a snapshot of active claim-scoped heartbeat workers."""
+        return self._heartbeats.snapshot()
 
-        Example:
-        --------
-        >>> count = client.get_active_heartbeat_count()
-        >>> print(f"Active heartbeats: {count}")
-        """
-        with self.lock:
-            return len(self._active_heartbeats)
+    def get_active_heartbeats(self) -> Dict[Claim, dict]:
+        """Return a snapshot of active claim-scoped heartbeat workers."""
+        return self._heartbeats.snapshot()
 
-    def get_heartbeat_stats(self) -> Dict[str, dict]:
-        """
-        Get detailed statistics for all heartbeats (active and recently completed).
+    def stop_heartbeat(self, claim: Claim) -> bool:
+        """Stop this exact claim; never infer an attempt from a message ID."""
+        if not isinstance(claim, Claim):
+            raise TypeError("stop_heartbeat requires a Claim")
+        return self._heartbeats.stop(claim)
 
-        Returns a dictionary mapping message IDs to their heartbeat metrics, including:
-        - message_id: The message identifier
-        - queue_name: The queue containing the message
-        - started_at: Timestamp when heartbeat started
-        - heartbeats_sent: Number of successful heartbeats sent
-        - heartbeats_failed: Number of failed heartbeat attempts
-        - last_heartbeat_at: Timestamp of last successful heartbeat
-        - last_error: Last error message (if any)
-        - ended_at: Timestamp when heartbeat ended (if completed)
-        - total_heartbeats: Total heartbeats sent (if completed)
-
-        Returns:
-        -------
-        Dict[str, dict]
-            Dictionary of heartbeat metrics keyed by message_id.
-
-        Example:
-        --------
-        >>> stats = client.get_heartbeat_stats()
-        >>> for msg_id, metrics in stats.items():
-        ...     print(f"Message {msg_id}: {metrics['heartbeats_sent']} heartbeats sent")
-        """
-        with self.lock:
-            return dict(self._heartbeat_metrics)
-
-    def get_active_heartbeats(self) -> Dict[str, dict]:
-        """
-        Get information about currently active heartbeats.
-
-        Returns a dictionary mapping message IDs to their heartbeat info, including:
-        - queue_name: The queue containing the message
-        - started_at: Timestamp when heartbeat started
-        - heartbeat_frequency: Interval between heartbeats in seconds
-
-        Returns:
-        -------
-        Dict[str, dict]
-            Dictionary of active heartbeat info keyed by message_id.
-
-        Example:
-        --------
-        >>> active = client.get_active_heartbeats()
-        >>> for msg_id, info in active.items():
-        ...     duration = time.time() - info['started_at']
-        ...     print(f"Message {msg_id} heartbeat running for {duration:.1f}s")
-        """
-        with self.lock:
-            return {
-                msg_id: {
-                    "queue_name": info["queue_name"],
-                    "started_at": info["started_at"],
-                    "heartbeat_frequency": info["heartbeat_frequency"],
-                    "duration": time.time() - info["started_at"],
-                }
-                for msg_id, info in self._active_heartbeats.items()
-            }
-
-    def stop_heartbeat(self, message_id: str) -> bool:
-        """
-        Manually stop the heartbeat for a specific message.
-
-        This can be used to stop heartbeats before acknowledging a message,
-        or to stop heartbeats for messages that are no longer being processed.
-
-        Parameters:
-        ----------
-        message_id : str
-            The unique identifier of the message whose heartbeat should be stopped.
-
-        Returns:
-        -------
-        bool
-            True if heartbeat was stopped, False if no active heartbeat for this message.
-
-        Example:
-        --------
-        >>> if client.stop_heartbeat("msg-123"):
-        ...     print("Heartbeat stopped")
-        ... else:
-        ...     print("No active heartbeat for this message")
-        """
-        with self.lock:
-            if message_id in self._heartbeat_control:
-                logging.info(f"Manually stopping heartbeat for message {message_id}")
-                self._heartbeat_control[message_id].set()
-                return True
-            return False
-
-    def close(self, timeout: float = 30.0, error_handler=None) -> None:
-        """
-        Gracefully closes the gRPC channel and stops all active heartbeats.
-
-        Closes the gRPC channel used by the SDK to communicate with the Nzovu service, ensuring
-        that resources are released and open connections to the service are terminated. This method
-        also stops all active heartbeat threads gracefully by signaling them to stop and waiting
-        for them to complete within the specified timeout. It is recommended to invoke this method
-        when the SDK is no longer needed, such as when your application is terminating, to cleanly
-        shut down the SDK components.
-
-        Parameters:
-        ----------
-        timeout : float, optional
-            Maximum time in seconds to wait for heartbeats to stop, by default 30.0.
-            If heartbeats don't stop within this time, they will be forcefully terminated.
-
-        error_handler : callable, optional
-            A custom error handling function that will be invoked if an error occurs during the operation.
-            The function should accept a single argument, which is the error/exception object.
-            If not provided, the SDK's default error handling mechanism will be utilized.
-
-        Returns:
-        -------
-        None
-
-        Raises:
-        ------
-        RpcOperationError:
-            If there's an error closing the gRPC channel and no custom error handler is provided.
-
-        Example:
-        --------
-        >>> client = NzovuClient(host="localhost", port=50051)
-        >>> # ... perform operations ...
-        >>> client.close()
-        >>> # Or with custom timeout:
-        >>> client.close(timeout=60.0)
-        """
+    def close(self, timeout: float = 30.0, error_handler=None):
+        """Stop admission, cancel channel RPCs, and join all managed heartbeat work."""
+        futures = self._heartbeats.begin_close()
         try:
-            logging.info("Closing NzovuClient, stopping all heartbeats...")
-
-            # Signal all active heartbeats to stop
-            with self.lock:
-                active_count = len(self._heartbeat_control)
-                if active_count > 0:
-                    logging.info(f"Signaling {active_count} active heartbeat(s) to stop")
-                    for message_id, stop_event in self._heartbeat_control.items():
-                        stop_event.set()
-
-            # Shutdown thread pool gracefully
-            logging.info("Shutting down heartbeat thread pool...")
-            self._heartbeat_executor.shutdown(wait=True)
-            # Note: ThreadPoolExecutor.shutdown doesn't support timeout parameter
-            # If we need timeout, we would need to implement it differently
-
-            # Legacy support - stop old heartbeat thread if it exists
-            if hasattr(self, "_heartbeat_manager_thread") and self._heartbeat_manager_thread.is_alive():
-                self._stop_heartbeat.set()
-                self._heartbeat_manager_thread.join(timeout=5.0)
-
-            # Close gRPC channel
-            if (
-                self.channel
-                and self.channel._channel.check_connectivity_state(True) != grpc.ChannelConnectivity.SHUTDOWN
-            ):
-                logging.info("Closing gRPC channel")
-                self.channel.close()
-
-            logging.info("NzovuClient closed successfully")
-
+            try:
+                if self.channel is not None:
+                    self.channel.close()
+            finally:
+                self._heartbeats.join(futures, timeout)
         except Exception as e:
-            logging.error(f"Error closing client: {e}")
-            error = RpcOperationError(f"Failed to close client due to: {e}")
-            self._handle_error(error, handler=error_handler)
+            self._handle_error(RpcOperationError(f"Failed to close client: {e}"), error_handler)

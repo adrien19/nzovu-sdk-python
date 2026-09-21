@@ -1,5 +1,3 @@
-import threading
-from collections import deque
 from unittest.mock import Mock
 
 import grpc
@@ -29,9 +27,6 @@ def mock_client():
     client.channel = mock_channel
     # Mock the QueueServiceStub
     client.stub = Mock(spec=service_pb2_grpc.QueueServiceStub(mock_channel))
-    client._heartbeat_data = Mock(spec=deque)
-    client._stop_heartbeat = Mock(spec=threading.Event)
-    client._heartbeat_manager_thread = Mock(spec=threading.Thread)
     return client
 
 
@@ -160,7 +155,7 @@ def test_heartbeat_management(mock_client: NzovuClient):
 
     # Call the method (Assuming you have a method that handles heartbeats)
     # This might involve threading and time.sleep which could be mocked for unit testing
-    response = mock_client.send_message_heartbeat(queue_name, message_id)
+    response = mock_client.send_message_heartbeat(queue_name, message_id, "attempt", "worker")
 
     # Assert the expected behavior
     mock_client.stub.SendMessageHeartBeat.assert_called_once()
@@ -173,7 +168,13 @@ def test_acknowledge_message(mock_client: NzovuClient):
     mock_client.stub.AcknowledgeMessage.return_value = mock_response
 
     # Prepare params
-    params = AcknowledgeMessageParams(message_id="12345", queue_name="test_queue", state=MessageState.COMPLETED.value)
+    params = AcknowledgeMessageParams(
+        message_id="12345",
+        queue_name="test_queue",
+        state=MessageState.COMPLETED.value,
+        worker_id="worker",
+        attempt_id="attempt",
+    )
 
     # Call the client's method
     response = mock_client.acknowledge_message(params=params)
@@ -189,7 +190,9 @@ def test_renew_message_lease(mock_client: NzovuClient):
     mock_client.stub.RenewMessageLease.return_value = mock_response
 
     # Call the client's method
-    response = mock_client.renew_message_lease(queue_name="test_queue", message_id="12345", new_lease_duration="40s")
+    response = mock_client.renew_message_lease(
+        queue_name="test_queue", message_id="12345", new_lease_duration="40s", worker_id="worker", attempt_id="attempt"
+    )
 
     # Assert the expected behavior
     mock_client.stub.RenewMessageLease.assert_called_once()
@@ -257,61 +260,25 @@ def test_get_queue_state(mock_client: NzovuClient):
 
 
 def test_close_and_succeed(mock_client: NzovuClient):
-    """
-    Test the happy path where the channel is open and can be closed without issues.
-    """
-    mock_client.channel._channel.check_connectivity_state.return_value = grpc.ChannelConnectivity.READY
-
-    # Call close and check
     mock_client.close()
-
-    # Ensure the heartbeat manager was signaled to stop and the thread was joined
-    mock_client._stop_heartbeat.set.assert_called_once()
-    mock_client._heartbeat_manager_thread.join.assert_called_once()
-
-    # Ensure the channel was checked and closed
-    mock_client.channel._channel.check_connectivity_state.assert_called_once_with(True)
     mock_client.channel.close.assert_called_once()
 
 
 def test_close_channel_already_closed_or_none(mock_client: NzovuClient):
-    """
-    Test trying to close a channel that's either already closed or is None.
-    """
-    mock_client.channel._channel.check_connectivity_state.return_value = grpc.ChannelConnectivity.SHUTDOWN
-
-    # Mock the heartbeat manager thread as not alive
-    mock_client._heartbeat_manager_thread.is_alive.return_value = False
-
-    # Call close and check
+    channel = mock_client.channel
     mock_client.close()
-
-    # Ensure the channel was checked and not closed
-    mock_client.channel._channel.check_connectivity_state.assert_called_once_with(True)
-
-    # Since thread is not alive, set should not be called
-    # But executor shutdown is always called
-    mock_client.channel.close.assert_not_called()
+    mock_client.close()
+    assert channel.close.call_count == 2
+    mock_client.channel = None
+    mock_client.close()
+    assert channel.close.call_count == 2
 
 
 def test_close_with_error(mock_client: NzovuClient):
-    """
-    Test the scenario where an error is raised when trying to close the channel.
-    """
-    mock_client.channel._channel.check_connectivity_state.return_value = grpc.ChannelConnectivity.READY
-    mock_client.channel.close.side_effect = MockRpcError("Error occured")
-
-    # Call close and check
+    mock_client.channel.close.side_effect = MockRpcError("Error occurred")
     with pytest.raises(RpcOperationError):
         mock_client.close()
-
-    # Ensure the channel was checked and a close attempt was made
-    mock_client.channel._channel.check_connectivity_state.assert_called_once_with(True)
     mock_client.channel.close.assert_called_once()
-
-    # Ensure the heartbeat manager was signaled to stop and the thread was joined
-    mock_client._stop_heartbeat.set.assert_called_once()
-    mock_client._heartbeat_manager_thread.join.assert_called_once()
 
 
 def test_cancel_message_success(mock_client: NzovuClient):

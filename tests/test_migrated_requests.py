@@ -8,6 +8,7 @@ from nzovu.api.message.v1.message_pb2 import Message
 from nzovu.api.queueservice.v1 import request_response_pb2
 from nzovu.api.schedule.v1 import schedule_pb2
 from nzovu.exceptions import RpcOperationError
+from nzovu.heartbeat import AsyncHeartbeats, SyncHeartbeats
 from nzovu.utils import AcknowledgeMessageParams, MessageState, PeekQueueMessagesParams, ScheduleOptions, ScheduleState
 
 PAGED_METHODS = [
@@ -23,8 +24,7 @@ PAGED_METHODS = [
 def client_with_stub(asynchronous):
     client = object.__new__(AsyncNzovuClient if asynchronous else NzovuClient)
     client.stub = AsyncMock() if asynchronous else Mock()
-    client._heartbeat_control = {}
-    client._heartbeat_stop_events = {}
+    client._heartbeats = (AsyncHeartbeats if asynchronous else SyncHeartbeats)(20, 300, 1000, 1, None, None)
     return client
 
 

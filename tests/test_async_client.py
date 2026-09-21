@@ -5,7 +5,6 @@ These tests verify that all async operations work correctly and match
 the functionality of the synchronous client.
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -168,6 +167,8 @@ async def test_acknowledge_message_success(async_client):
         queue_name="test_queue",
         message_id="msg123",
         state=0,
+        worker_id="worker",
+        attempt_id="attempt",
     )
 
     response = await async_client.acknowledge_message(params)
@@ -182,7 +183,9 @@ async def test_renew_message_lease_success(async_client):
     mock_response = MagicMock()
     async_client.stub.RenewMessageLease = AsyncMock(return_value=mock_response)
 
-    response = await async_client.renew_message_lease("my_queue", "msg123", "10m")
+    response = await async_client.renew_message_lease(
+        "my_queue", "msg123", "10m", worker_id="worker", attempt_id="attempt"
+    )
     assert response is not None
     async_client.stub.RenewMessageLease.assert_called_once()
     call_args = async_client.stub.RenewMessageLease.call_args[0][0]
@@ -278,7 +281,7 @@ async def test_send_message_heartbeat_success(async_client):
     mock_response = MagicMock()
     async_client.stub.SendMessageHeartBeat = AsyncMock(return_value=mock_response)
 
-    response = await async_client.send_message_heartbeat("test_queue", "msg123")
+    response = await async_client.send_message_heartbeat("test_queue", "msg123", "attempt", "worker")
     assert response is not None
     async_client.stub.SendMessageHeartBeat.assert_called_once()
 
@@ -507,23 +510,17 @@ async def test_heartbeat_observability(async_client):
     # Initially no heartbeats
     assert async_client.get_active_heartbeat_count() == 0
     assert async_client.get_heartbeat_stats() == {}
-    assert async_client.get_active_heartbeats() == []
+    assert async_client.get_active_heartbeats() == {}
 
 
 @pytest.mark.asyncio
 async def test_stop_heartbeat(async_client):
-    """Test stop_heartbeat method."""
-    # Create a fake heartbeat entry
-    msg_id = "test_msg_123"
-    async_client._heartbeat_stop_events[msg_id] = asyncio.Event()
+    from nzovu import Claim
 
-    # Stop it
-    result = await async_client.stop_heartbeat(msg_id)
-    assert result is True
-
-    # Stopping non-existent heartbeat returns False
-    result = await async_client.stop_heartbeat("nonexistent")
-    assert result is False
+    claim = Claim("queue", "message", "worker", "attempt")
+    assert await async_client.stop_heartbeat(claim) is False
+    with pytest.raises(TypeError, match="Claim"):
+        await async_client.stop_heartbeat("message")
 
 
 @pytest.mark.asyncio

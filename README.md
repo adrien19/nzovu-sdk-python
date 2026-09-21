@@ -3,8 +3,8 @@
 Python distribution/import: **`nzovu`**. Repository: **`nzovu-sdk-python`**.
 
 This checkout prepares `0.0.1`. Package identity and generated protocol modules
-and SDK-PR2 request/response contracts are migrated; authentication and worker
-lifecycle work continues in SDK-PR3. It is not yet a published or release-ready client.
+and SDK-PR2 request/response contracts are migrated; SDK-PR3 adds authenticated
+transport and claim-scoped worker lifecycle. It is not yet a published or release-ready client.
 
 ## Development
 
@@ -44,7 +44,8 @@ SHA; see [CONTRIBUTING.md](CONTRIBUTING.md). Review and regenerate together.
 The future install names are `pip install nzovu` and `pip install 'nzovu[pydantic]'`.
 For now, build/install the local wheel. Optional Pydantic models remain available;
 See [API contracts](docs/API_CONTRACTS.md) for payloads, headers, pagination and
-typed responses; remaining release gates are in [migration status](docs/MIGRATION_STATUS.md).
+typed responses and [authentication/ownership](docs/AUTH_OWNERSHIP.md) for secure
+connections, claims and bounded workers; remaining release gates are in [migration status](docs/MIGRATION_STATUS.md).
 
 Development versions start at `0.0.1.dev0`, with `0.0.1rc1` candidates and an
 intended first final version `0.0.1`. `nzovu.__version__` reads installed metadata;

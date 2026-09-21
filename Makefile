@@ -71,3 +71,7 @@ publish publish-test:
 ci: check-proto lint typecheck test
 
 all: install-dev gen-proto
+
+.PHONY: check-live-ownership
+check-live-ownership:
+	$(PYTHON) scripts/run_live_ownership.py --server-binary "$(NZOVU_SERVER_BINARY)" -- $(PYTHON) -m pytest tests/test_live_ownership.py -v
