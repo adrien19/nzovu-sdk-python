@@ -1,7 +1,6 @@
 """Opt-in real Nzovu TLS and ownership gates; see scripts/run_live_ownership.py."""
 
 import asyncio
-import json
 import os
 import time
 from pathlib import Path
@@ -24,11 +23,6 @@ from nzovu import (
 from tests.test_ownership import invoke, until
 
 pytestmark = pytest.mark.skipif(not os.environ.get("NZOVU_LIVE_CONFIG"), reason="requires live Nzovu fixture")
-
-
-@pytest.fixture
-def live():
-    return json.loads(Path(os.environ["NZOVU_LIVE_CONFIG"]).read_text())
 
 
 async def connect(live, asynchronous, mode="tls", credentials="valid", key="valid", ca="ca", plaintext=False):

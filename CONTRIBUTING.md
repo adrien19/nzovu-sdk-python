@@ -7,7 +7,7 @@ user authorization. This independent repository preserves the original SDK histo
 
 Use Python 3.12 and Poetry 2.3.1. The devcontainer pins both and installs the
 committed lockfile without host Docker socket access or automatically starting
-services. The inherited Python 3.10–3.14 CI matrix remains a compatibility gate.
+services. The Python 3.10–3.14 installed-artifact matrix is a compatibility gate.
 
 ```bash
 make install-dev
@@ -67,3 +67,43 @@ with `CGO_ENABLED=1 go build -tags sqlite`; OpenSSL supplies test certificates.
 See [authentication and ownership](docs/AUTH_OWNERSHIP.md) for Docker execution,
 explicit claims, deadlines and worker limits. Normal unit runs skip these live
 cases; execute this gate separately before approving transport/lifecycle changes.
+
+## SDK-PR4 compatibility gate
+
+Install the example's separate lockfile before checking its tests:
+
+```bash
+(cd examples/store-api && poetry sync --with dev)
+make test-examples check-identity
+make test-coverage
+make build
+python scripts/check_artifacts.py --profiles minimum latest --run-tests --report reports/installed.json
+```
+
+Use an isolated PostgreSQL database and a server binary built from the exact
+`proto/SOURCE.json` revision. The harness reads Go build metadata to check that
+revision, starts temporary TLS/mTLS servers for both backends, and stops them
+when the test command exits. OpenSSL and Go must be on PATH. The configured
+database receives disposable queues, messages, schemas and schedules.
+
+```bash
+export NZOVU_TEST_POSTGRES_DSN='postgres://nzovu:sdk-fixture@localhost:5432/nzovu?sslmode=disable'
+make check-live NZOVU_SERVER_BINARY=/absolute/path/to/nzovu
+NZOVU_REQUIRE_BACKENDS=sqlite,postgres python scripts/run_live_ownership.py \
+  --server-binary /absolute/path/to/nzovu -- \
+  python scripts/check_artifacts.py --profiles minimum latest --run-tests \
+    --report reports/installed-live.json
+```
+
+The fixture exports `NZOVU_LIVE_CONFIG` to its child command. Use the same harness
+with the example environment's Python and `-m pytest tests/test_live_store.py`
+from `examples/store-api` to exercise the real HTTP/worker flows. Installed SDK
+checks use fresh environments outside the checkout; the pinned compiler/source
+comparison runs separately in the Python 3.12 quality job. Reports record actual
+dependencies, artifact hashes and server provenance.
+
+For dependency auditing, install `pip-audit==2.10.1` in a separate tool environment,
+then run `make audit PIP_AUDIT=/absolute/path/to/pip-audit`. Audit both SDK and
+example lockfile environments. CI checks are fatal and preserve coverage XML.
+Keep pinned-server failures distinct from candidate-fix results in validation
+reports. Do not mark failures expected or hide them to pass the release gate.

@@ -1,8 +1,9 @@
-"""Run SDK-PR3 gates against a local Nzovu binary (SQLite, TLS and mTLS)."""
+"""Run SDK compatibility gates against a local Nzovu binary (SQLite/PostgreSQL, TLS and mTLS)."""
 
 import argparse
 import json
 import os
+import re
 import socket
 import subprocess
 import tempfile
@@ -93,12 +94,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--server-binary", required=True, type=Path)
     parser.add_argument("--host", default="localhost")
+    parser.add_argument("--server-label", default="pinned")
+    parser.add_argument("--postgres-dsn", default=os.environ.get("NZOVU_TEST_POSTGRES_DSN"))
     parser.add_argument("--temp-root", type=Path)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if not args.command:
         parser.error("provide the pytest command after --")
-    directory = Path(tempfile.mkdtemp(prefix="nzovu-sdk3-live-", dir=args.temp_root)).resolve()
+    directory = Path(tempfile.mkdtemp(prefix="nzovu-sdk-live-", dir=args.temp_root)).resolve()
     processes, logs = [], []
     try:
         certificate(directory, "ca")
@@ -106,10 +109,28 @@ def main():
         certificate(directory, "server", "ca", server=True)
         certificate(directory, "client", "ca")
         certificate(directory, "wrong-client", "wrong-ca")
-        config = {"host": args.host, "directory": str(directory), "api_key": "sdk-fixture-key"}
-        for mode in ("tls", "mtls"):
+        manifest = json.loads((Path(__file__).resolve().parents[1] / "proto/SOURCE.json").read_text())
+        build_info = subprocess.check_output(["go", "version", "-m", str(args.server_binary.resolve())], text=True)
+        match = re.search(r"vcs.revision=([0-9a-f]{40})", build_info)
+        if match is None or match.group(1) != manifest["commit"]:
+            raise RuntimeError("Server binary does not match proto/SOURCE.json commit")
+        config = {
+            "host": args.host,
+            "directory": str(directory),
+            "api_key": "sdk-fixture-key",
+            "source": manifest,
+            "backends": {},
+        }
+        config["server_build"] = build_info
+        config["server_label"] = args.server_label
+        profiles = [
+            (backend, mode)
+            for backend in (["sqlite", "postgres"] if args.postgres_dsn else ["sqlite"])
+            for mode in ("tls", "mtls")
+        ]
+        for backend, mode in profiles:
             grpc_port, http_port = port(), port()
-            config[mode] = grpc_port
+            config["backends"].setdefault(backend, {})[mode] = grpc_port
             command = [
                 str(args.server_binary.resolve()),
                 "server",
@@ -130,6 +151,9 @@ def main():
                 "--log-level",
                 "error",
             ]
+            if backend == "postgres":
+                index = command.index("--database")
+                command[index : index + 2] = ["--storage-type", "postgres", "--postgres-dsn", args.postgres_dsn]
             if mode == "mtls":
                 command += [
                     "--ca-cert-file",
@@ -139,7 +163,7 @@ def main():
                     "--gateway-client-key",
                     str(directory / "client.key"),
                 ]
-            log = (directory / f"{mode}.log").open("w")
+            log = (directory / f"{backend}-{mode}.log").open("w")
             logs.append(log)
             env = dict(os.environ, AUTH_ENABLED="true", API_KEYS=config["api_key"])
             process = subprocess.Popen(command, env=env, stdout=log, stderr=subprocess.STDOUT)
@@ -147,13 +171,13 @@ def main():
             deadline = time.monotonic() + 20
             while True:
                 if process.poll() is not None:
-                    raise RuntimeError(f"Nzovu {mode} exited; inspect {directory / (mode + '.log')}")
+                    raise RuntimeError(f"Nzovu {backend}/{mode} exited; inspect {log.name}")
                 try:
                     with socket.create_connection(("localhost", grpc_port), timeout=0.2):
                         break
                 except OSError:
                     if time.monotonic() > deadline:
-                        raise TimeoutError(f"Nzovu {mode} did not start")
+                        raise TimeoutError(f"Nzovu {backend}/{mode} did not start")
                     time.sleep(0.1)
         config_file = directory / "config.json"
         config_file.write_text(json.dumps(config))

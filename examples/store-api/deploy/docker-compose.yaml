@@ -1,53 +1,29 @@
-
 services:
-  nzovusvc:
-    container_name: nzovu_container
-    image: ghcr.io/adrien19/nzovu:latest
-    # env_file: .env
+  nzovu:
+    image: ${NZOVU_IMAGE:?Build the pinned server and set NZOVU_IMAGE}
+    command: [server, --dev, --storage-type, postgres, --postgres-host, postgres, --postgres-sslmode, disable]
     environment:
-      - SERVER_MODE=development
-      - REDIS_ADDR=cachesvc:6379
-      - REDIS_PASSWORD=
-      - REDIS_USERNAME=
-      - REDIS_DB=0
-      - REDIS_TLS_ENABLED=false
-      - SERVER_CERT_PATH=/secrets/server.crt
-      - SERVER_KEY_PATH=/secrets/server.key
-      - CA_CERT_PATH=/secrets/ca.crt
-      - NZOVU_TLS_ENABLED=false
-      - ENABLE_ENCRYPTION=false
-      - ENCRYPTION_KEY_SOURCE_TYPE=LOCAL
-      - ENCRYPTION_KEY=0123456789abcdef0123456789abcdef
-      - LOG_LEVEL=debug
-      - LOG_FORMAT=text
+      POSTGRES_USER: nzovu
+      POSTGRES_PASSWORD: local-example
+      POSTGRES_DB: nzovu
+      NZOVU_TLS_ENABLED: "false"
+      AUTH_ENABLED: "true"
+      API_KEYS: local-example-key
+      METRICS_ENABLED: "false"
     depends_on:
-      - cachesvc
-    networks:
-      - nzovu_network
-    # volumes:
-    #   - ../certs:/secrets
+      postgres:
+        condition: service_healthy
     ports:
-      - "9000:9000"
-      - "8080:8080"
-
-  cachesvc:
-    image: redis/redis-stack:latest
-    container_name: cachesvc_container
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:8080:8080"
+  postgres:
+    image: postgres:17-alpine
     environment:
-      - ALLOW_EMPTY_PASSWORD=yes
-    ports:
-      - '7379:6379'
-      - '8001:8001'
-    networks:
-      - nzovu_network
-    # volumes: 
-    #   - cachesvc:/data
-    restart: unless-stopped
-
-networks:
-  nzovu_network:
-    name: nzovu_network
-    driver: bridge
-
-# volumes:
-#     cachesvc:
+      POSTGRES_USER: nzovu
+      POSTGRES_PASSWORD: local-example
+      POSTGRES_DB: nzovu
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U nzovu -d nzovu]
+      interval: 2s
+      timeout: 2s
+      retries: 20

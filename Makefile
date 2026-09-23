@@ -46,16 +46,17 @@ test-coverage:
 	$(PYTHON) -m pytest tests/ -v --cov=nzovu --cov-report=term-missing --cov-report=html --cov-report=xml
 
 lint:
-	$(PYTHON) -m flake8 nzovu/ tests/ scripts/ --max-line-length=120 --count --statistics
+	$(PYTHON) -m flake8 nzovu/ tests/ scripts/ examples/ --max-line-length=120 --count --statistics
 
 typecheck:
-	$(PYTHON) -m mypy nzovu/ scripts/
+	$(PYTHON) -m mypy nzovu/ scripts/ examples/store-api/api/ examples/store-api/config/
 
 format:
-	$(PYTHON) -m black $(FORMAT_FLAGS) nzovu/ tests/ scripts/
-	$(PYTHON) -m isort $(FORMAT_FLAGS) nzovu/ tests/ scripts/ --skip nzovu/api
+	$(PYTHON) -m black $(FORMAT_FLAGS) nzovu/ tests/ scripts/ examples/
+	$(PYTHON) -m isort $(FORMAT_FLAGS) nzovu/ tests/ scripts/ examples/ --skip nzovu/api
 
-build: clean
+build:
+	rm -rf dist build
 	$(POETRY) build
 
 check-artifacts:
@@ -75,3 +76,22 @@ all: install-dev gen-proto
 .PHONY: check-live-ownership
 check-live-ownership:
 	$(PYTHON) scripts/run_live_ownership.py --server-binary "$(NZOVU_SERVER_BINARY)" -- $(PYTHON) -m pytest tests/test_live_ownership.py -v
+
+.PHONY: test-examples check-live
+
+test-examples:
+	cd examples/store-api && $(POETRY) check --lock && $(POETRY) run python -m pytest tests/ -v
+
+check-live:
+	@test -n "$$NZOVU_TEST_POSTGRES_DSN" || { echo "Set NZOVU_TEST_POSTGRES_DSN for an isolated test database." >&2; exit 1; }
+	NZOVU_REQUIRE_BACKENDS=sqlite,postgres $(PYTHON) scripts/run_live_ownership.py --server-binary "$(NZOVU_SERVER_BINARY)" -- $(PYTHON) -m pytest tests/test_live_contracts.py tests/test_live_ownership.py -v
+
+.PHONY: check-identity audit
+PIP_AUDIT ?= pip-audit
+
+check-identity:
+	$(PYTHON) scripts/check_identity.py
+
+audit:
+	$(PIP_AUDIT) --path "$$($(PYTHON) -c 'import site; print(site.getsitepackages()[0])')" --skip-editable
+	cd examples/store-api && $(PIP_AUDIT) --path "$$($(PYTHON) -c 'import site; print(site.getsitepackages()[0])')" --skip-editable

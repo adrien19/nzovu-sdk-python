@@ -1,14 +1,16 @@
 # SDK migration status
 
-SDK-PR0 through SDK-PR3 are complete. Local unit, type, style, generation,
-installed-artifact and live TLS/mTLS ownership gates pass. Broader SDK-PR4
-compatibility/examples and SDK-PR5 release gates remain before publication.
+SDK-PR0 through SDK-PR3 are complete. SDK-PR4 implementation and whole-SDK
+audit are complete; release validation remains blocked. The unchanged server
+pin has schema/cron defects; extended candidate validation also exposed
+storage failures. These results do not satisfy the approved-server release gate. SDK-PR5 remains pending.
 
 ## Repository and review state
 
 The independent repository preserves all 79 source commits, including
 `843f46e424300fcd3bc1d1706cd1d30d1cd683de`, which seeded the new repository.
-SDK-PR0 and SDK-PR1 are now merged into `main` at `a7f402a`.
+SDK-PR0 and SDK-PR1 merged into `main` at `a7f402a`; SDK-PR2 and SDK-PR3
+subsequently merged, with `main` at `2eb933c`.
 GitHub's default branch is verified as `main`. No release tags or publication
 have occurred.
 
@@ -38,7 +40,7 @@ from merged `main`; SDK-PR3 stacks on SDK-PR2. See [bootstrap results](MIGRATION
 - Installed wheel/sdist smoke checks are repeatable via `make check-artifacts`
   and run in CI after the build.
 
-## Validation
+## SDK-PR1 validation (historical)
 
 Executed in the pinned Linux ARM64/Python 3.12.14 development container:
 
@@ -149,3 +151,16 @@ Logs: `/private/tmp/nzovu-sdk3-final-validation.log` and
 `/private/tmp/nzovu-sdk3-live5.log`. Hosted CI, PostgreSQL, other advertised
 Python versions and the full live RPC matrix remain SDK-PR4 validation work.
 No package publication, release tags or default-branch push is part of PR2/PR3.
+
+## SDK-PR4 implementation
+
+Branch: `migration/sdk-pr4-live-examples`, based on SDK-PR3 `4096257`.
+Both backends, both clients and all 31 RPCs have live coverage; examples and packaging/CI gates are migrated.
+Release validation remains blocked by server schema/cron defects, SQLite locking
+and a PostgreSQL queue-deletion deadlock. An approved server revision and hosted
+CI are required. Earlier result tables above record what was tested at each PR,
+rather than current coverage limitations.
+
+SDK-PR5 versioning, trusted-publisher configuration, TestPyPI/PyPI publication and
+public-install verification remain pending. No version bump, tag, publication or
+server PR6 release is authorized by completing this audit.

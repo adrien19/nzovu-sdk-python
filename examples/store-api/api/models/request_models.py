@@ -1,12 +1,11 @@
-from pydantic import BaseModel
-from typing import List, Dict
+from pydantic import BaseModel, Field
 
 
 class Item(BaseModel):
-    name: str
-    quantity: int
-    price: float
+    name: str = Field(min_length=1)
+    quantity: int = Field(gt=0)
+    price: float = Field(ge=0, allow_inf_nan=False)
 
 
 class CartItems(BaseModel):
-    items: List[Item]
+    items: list[Item] = Field(min_length=1)
