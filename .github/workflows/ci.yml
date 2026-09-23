@@ -83,11 +83,21 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write('commit=' + json.load(open('proto/SOURCE.json'))['commit'] + '\n')
           PY
+      - name: Check private server access
+        env:
+          NZOVU_SOURCE_TOKEN: ${{ secrets.NZOVU_SOURCE_TOKEN }}
+        run: |
+          if [ -z "$NZOVU_SOURCE_TOKEN" ]; then
+            echo "::error::Configure NZOVU_SOURCE_TOKEN with read-only Contents access to adrien19/nzovu."
+            exit 1
+          fi
       - uses: actions/checkout@v4
         with:
           repository: adrien19/nzovu
           ref: ${{ steps.server.outputs.commit }}
           path: .live-server
+          token: ${{ secrets.NZOVU_SOURCE_TOKEN }}
+          persist-credentials: false
       - uses: actions/setup-go@v5
         with:
           go-version-file: .live-server/go.mod

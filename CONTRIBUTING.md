@@ -107,3 +107,9 @@ then run `make audit PIP_AUDIT=/absolute/path/to/pip-audit`. Audit both SDK and
 example lockfile environments. CI checks are fatal and preserve coverage XML.
 Keep pinned-server failures distinct from candidate-fix results in validation
 reports. Do not mark failures expected or hide them to pass the release gate.
+
+Hosted live jobs also need the repository Actions secret `NZOVU_SOURCE_TOKEN`
+with read-only Contents access to the private `adrien19/nzovu` repository. The
+SDK repository's default `GITHUB_TOKEN` cannot read that separate private repo.
+Server checkout does not persist this credential. Missing access fails explicitly;
+local unit/desktop jobs do not require the secret. Do not put tokens in source files.
