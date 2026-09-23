@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/adrien19/nzovu",
-  "commit": "f21477ecab47197f0c8c92dbdde2aab11ef02600",
+  "commit": "b4e534a18ff3e44d28e37058410184dcedea4d20",
   "files": {
     "proto/common/v1/common.proto": "7224012049d628340c73c5da6f13511ca50bafc1d5cd312cfed5e34af9869534",
     "proto/google/api/annotations.proto": "acfefd6eafec3de02c1fd7afb906c3f69bc83b399a2df3ed994b6a804140dbcb",

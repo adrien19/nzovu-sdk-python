@@ -4,8 +4,7 @@ Python distribution/import: **`nzovu`**. Repository: **`nzovu-sdk-python`**.
 
 This checkout prepares `0.0.1`. Both clients implement all 31 RPCs, authenticated transport, explicit claims and
 bounded worker lifecycle. SDK-PR4 adds live backend checks, migrated examples and
-installed-distribution validation. Publication remains blocked by the server fixes
-and release gates recorded in [migration status](docs/MIGRATION_STATUS.md).
+installed-distribution validation. Publication remains pending the review and CI gates recorded in [migration status](docs/MIGRATION_STATUS.md).
 
 ## Development
 

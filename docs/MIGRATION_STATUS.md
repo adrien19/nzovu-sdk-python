@@ -1,9 +1,8 @@
 # SDK migration status
 
 SDK-PR0 through SDK-PR3 are complete. SDK-PR4 implementation and whole-SDK
-audit are complete; release validation remains blocked. The unchanged server
-pin has schema/cron defects; extended candidate validation also exposed
-storage failures. These results do not satisfy the approved-server release gate. SDK-PR5 remains pending.
+audit are complete; the server fixes are committed and pinned. Publication
+still requires review and hosted live validation. SDK-PR5 remains pending.
 
 ## Repository and review state
 
@@ -156,10 +155,19 @@ No package publication, release tags or default-branch push is part of PR2/PR3.
 
 Branch: `migration/sdk-pr4-live-examples`, based on SDK-PR3 `4096257`.
 Both backends, both clients and all 31 RPCs have live coverage; examples and packaging/CI gates are migrated.
-Release validation remains blocked by server schema/cron defects, SQLite locking
-and a PostgreSQL queue-deletion deadlock. An approved server revision and hosted
-CI are required. Earlier result tables above record what was tested at each PR,
-rather than current coverage limitations.
+The server pin is now `b4e534a18ff3e44d28e37058410184dcedea4d20`. It contains fixes for
+schema payload preservation, cron descriptor execution, SQLite writer reservation
+and bounded PostgreSQL deletion-deadlock retries. Protocol definitions and
+checksums are unchanged. All 40 local installed/live combinations passed against
+the candidate containing these changes; server package/integration tests,
+repeated concurrency regressions and lint also passed. Revalidation against the
+clean committed server passed 617 installed-wheel tests, including all 68 live
+cases; generation checks and base/Pydantic wheel/sdist smoke checks passed.
+
+Hosted quality, macOS and Windows checks passed. Linux live CI awaits the
+`NZOVU_SOURCE_TOKEN` secret for the private server repository; the user deferred
+configuration. SDK and server PRs remain drafts pending review and hosted live
+validation. Earlier result tables record validation performed at each PR.
 
 SDK-PR5 versioning, trusted-publisher configuration, TestPyPI/PyPI publication and
 public-install verification remain pending. No version bump, tag, publication or
