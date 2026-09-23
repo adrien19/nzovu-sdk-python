@@ -1,14 +1,15 @@
 # SDK migration status
 
-SDK-PR0 through SDK-PR3 are complete. Local unit, type, style, generation,
-installed-artifact and live TLS/mTLS ownership gates pass. Broader SDK-PR4
-compatibility/examples and SDK-PR5 release gates remain before publication.
+SDK-PR0 through SDK-PR3 are complete. SDK-PR4 implementation and whole-SDK
+audit are complete; the server fixes are committed and pinned. Publication
+still requires review and hosted live validation. SDK-PR5 remains pending.
 
 ## Repository and review state
 
 The independent repository preserves all 79 source commits, including
 `843f46e424300fcd3bc1d1706cd1d30d1cd683de`, which seeded the new repository.
-SDK-PR0 and SDK-PR1 are now merged into `main` at `a7f402a`.
+SDK-PR0 and SDK-PR1 merged into `main` at `a7f402a`; SDK-PR2 and SDK-PR3
+subsequently merged, with `main` at `2eb933c`.
 GitHub's default branch is verified as `main`. No release tags or publication
 have occurred.
 
@@ -38,7 +39,7 @@ from merged `main`; SDK-PR3 stacks on SDK-PR2. See [bootstrap results](MIGRATION
 - Installed wheel/sdist smoke checks are repeatable via `make check-artifacts`
   and run in CI after the build.
 
-## Validation
+## SDK-PR1 validation (historical)
 
 Executed in the pinned Linux ARM64/Python 3.12.14 development container:
 
@@ -149,3 +150,25 @@ Logs: `/private/tmp/nzovu-sdk3-final-validation.log` and
 `/private/tmp/nzovu-sdk3-live5.log`. Hosted CI, PostgreSQL, other advertised
 Python versions and the full live RPC matrix remain SDK-PR4 validation work.
 No package publication, release tags or default-branch push is part of PR2/PR3.
+
+## SDK-PR4 implementation
+
+Branch: `migration/sdk-pr4-live-examples`, based on SDK-PR3 `4096257`.
+Both backends, both clients and all 31 RPCs have live coverage; examples and packaging/CI gates are migrated.
+The server pin is now `b4e534a18ff3e44d28e37058410184dcedea4d20`. It contains fixes for
+schema payload preservation, cron descriptor execution, SQLite writer reservation
+and bounded PostgreSQL deletion-deadlock retries. Protocol definitions and
+checksums are unchanged. All 40 local installed/live combinations passed against
+the candidate containing these changes; server package/integration tests,
+repeated concurrency regressions and lint also passed. Revalidation against the
+clean committed server passed 617 installed-wheel tests, including all 68 live
+cases; generation checks and base/Pydantic wheel/sdist smoke checks passed.
+
+Hosted quality, macOS and Windows checks passed. Linux live CI awaits the
+`NZOVU_SOURCE_TOKEN` secret for the private server repository; the user deferred
+configuration. SDK and server PRs remain drafts pending review and hosted live
+validation. Earlier result tables record validation performed at each PR.
+
+SDK-PR5 versioning, trusted-publisher configuration, TestPyPI/PyPI publication and
+public-install verification remain pending. No version bump, tag, publication or
+server PR6 release is authorized by completing this audit.

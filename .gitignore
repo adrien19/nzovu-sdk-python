@@ -82,3 +82,7 @@ coverage.xml
 # End of https://www.gitignore.io/api/python
 deploy/olm-catalog/k8s-triliovault/.DS_Store
 *.DS_Store
+!examples/store-api/poetry.lock
+reports/
+.live-server/
+/docs/SDK_PR4_VALIDATION.md

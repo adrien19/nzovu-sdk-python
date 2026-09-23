@@ -1,169 +1,84 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
-from typing import Optional
-import os
-from nzovu.client import NzovuClient
-from nzovu.utils import TlsConfig
+import grpc
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+
+from nzovu import RpcOperationError
+
 from ..models.request_models import CartItems
 from ..models.response_models import CartResponse
-from ..workers import store_cart_worker
-from config.settings import NZOVU_HOST, NZOVU_PORT, QUEUE_NAME_STORE_CART, QUEUE_NAME_CHECKOUT_CART
+from ..sdk import invoke
+from ..workers.store_cart_worker import process_cart
 
 router = APIRouter()
 
-# This is a cache to store the client instance
-client_cache = None
+
+def get_nzovu_client(request: Request):
+    return request.app.state.nzovu
 
 
-def get_nzovu_client():
-    global client_cache
-    if client_cache is None:
-        try:
-            # Check if TLS certs exist
-            ca_path = "./certs/ca.crt"
-            client_crt_path = "./certs/client.crt"
-            client_key_path = "./certs/client.key"
-
-            use_tls = all(os.path.exists(p) for p in [ca_path, client_crt_path, client_key_path])
-
-            if use_tls:
-                client_cache = NzovuClient(
-                    host=NZOVU_HOST,
-                    port=NZOVU_PORT,
-                    use_tls=True,
-                    tls_config=TlsConfig(
-                        ca_path=ca_path, client_crt_path=client_crt_path, client_key_path=client_key_path
-                    ),
-                )
-            else:
-                # Use insecure connection for testing/development
-                client_cache = NzovuClient(
-                    host=NZOVU_HOST,
-                    port=NZOVU_PORT,
-                    use_tls=False,
-                )
-        except Exception as e:
-            # Handle client initialization errors if necessary
-            raise HTTPException(status_code=500, detail=str(e))
-    return client_cache
+def rpc_error(error):
+    codes = {
+        grpc.StatusCode.NOT_FOUND: 404,
+        grpc.StatusCode.ALREADY_EXISTS: 409,
+        grpc.StatusCode.INVALID_ARGUMENT: 422,
+        grpc.StatusCode.UNAVAILABLE: 503,
+        grpc.StatusCode.DEADLINE_EXCEEDED: 504,
+    }
+    return HTTPException(status_code=codes.get(error.code(), 502), detail=error.details())
 
 
 @router.post("/cart", response_model=CartResponse)
 async def post_cart_items(
-    cart_id: str,
-    cart: CartItems,
-    background_tasks: BackgroundTasks,
-    client: NzovuClient = Depends(get_nzovu_client),
+    cart: CartItems, cart_id: str = Query(pattern=r"^[A-Za-z0-9_-]{1,200}$"), client=Depends(get_nzovu_client)
 ):
-    """
-    Submit cart items for processing.
-
-    This endpoint demonstrates:
-    - Posting messages to a queue
-    - Background task processing
-    - Basic message queuing workflow
-    """
     try:
-        # Add the task to post the cart to the "store-cart" queue to be executed in the background
-        background_tasks.add_task(store_cart_worker.process_cart, cart_id, cart, client)
-        return CartResponse(
-            status="success",
-            message="Cart items queued successfully for processing",
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to queue cart: {str(e)}")
+        await process_cart(cart_id, cart, client)
+        return CartResponse(status="queued", message="Cart queued for processing", cart_id=cart_id)
+    except RpcOperationError as error:
+        raise rpc_error(error) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
 
 
 @router.get("/queue/{queue_name}/stats")
-async def get_queue_stats(queue_name: str, client: NzovuClient = Depends(get_nzovu_client)):
-    """
-    Get statistics for a specific queue.
-
-    This endpoint demonstrates:
-    - Queue inspection
-    - Monitoring queue health
-    """
+async def get_queue_stats(queue_name: str, client=Depends(get_nzovu_client)):
     try:
-        response = client.get_queue(name=queue_name)
-        queue_data = response.to_dict()
-
-        return {
-            "queue_name": queue_name,
-            "stats": queue_data,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Queue not found: {str(e)}")
+        response = await invoke(client.get_queue_state, queue_name)
+        return {"queue_name": queue_name, "stats": response.to_dict()}
+    except RpcOperationError as error:
+        raise rpc_error(error) from error
 
 
 @router.get("/queues")
 async def list_queues(
-    prefix: Optional[str] = None,
-    limit: int = 100,
-    client: NzovuClient = Depends(get_nzovu_client),
+    prefix: str = "", page_size: int = Query(100, ge=0, le=1000), page_token: str = "", client=Depends(get_nzovu_client)
 ):
-    """
-    List all queues or filter by prefix.
-
-    This endpoint demonstrates:
-    - Listing queues
-    - Queue discovery
-    """
     try:
-        response = client.list_queues(prefix=prefix or "", limit=limit)
-        queues_data = response.to_dict()
-
-        return {
-            "queues": queues_data.get("queues", []),
-            "total_count": queues_data.get("total_count", 0),
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to list queues: {str(e)}")
+        return (await invoke(client.list_queues, prefix=prefix, page_size=page_size, page_token=page_token)).to_dict()
+    except RpcOperationError as error:
+        raise rpc_error(error) from error
 
 
 @router.get("/queue/{queue_name}/messages/pending")
-async def get_pending_messages_count(queue_name: str, client: NzovuClient = Depends(get_nzovu_client)):
-    """
-    Get count of pending messages in a queue.
-
-    This endpoint demonstrates:
-    - Queue metrics
-    - Message monitoring
-    """
+async def get_pending_messages_count(queue_name: str, client=Depends(get_nzovu_client)):
     try:
-        response = client.get_queue(name=queue_name)
-        queue_data = response.to_dict()
-
+        counts = (await invoke(client.get_queue_state, queue_name)).to_proto().state_counts
         return {
             "queue_name": queue_name,
-            "pending_messages": queue_data.get("queue", {}).get("pending_message_count", 0),
-            "total_messages": queue_data.get("queue", {}).get("message_count", 0),
+            "pending_messages": counts.get("PENDING", 0),
+            "total_messages": sum(counts.values()),
         }
-    except Exception as e:
-        raise HTTPException(status_code=404, detail=f"Queue not found: {str(e)}")
+    except RpcOperationError as error:
+        raise rpc_error(error) from error
 
 
 @router.delete("/queue/{queue_name}")
-async def delete_queue(queue_name: str, client: NzovuClient = Depends(get_nzovu_client)):
-    """
-    Delete a queue (use with caution).
-
-    This endpoint demonstrates:
-    - Queue lifecycle management
-    - Queue deletion
-    """
+async def delete_queue(queue_name: str, client=Depends(get_nzovu_client)):
     try:
-        response = client.delete_queue(name=queue_name)
-        result = response.to_dict()
-
-        return {
-            "status": "success",
-            "message": f"Queue '{queue_name}' deleted successfully",
-            "result": result,
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete queue: {str(e)}")
+        return (await invoke(client.delete_queue, name=queue_name)).to_dict()
+    except RpcOperationError as error:
+        raise rpc_error(error) from error
 
 
 @router.get("/health")
-async def health_check():
-    """Basic health check endpoint."""
-    return {"status": "healthy", "service": "store-api"}
+async def health_check(client=Depends(get_nzovu_client)):
+    return {"status": "healthy", "service": "store-api", "active_heartbeats": client.get_active_heartbeat_count()}

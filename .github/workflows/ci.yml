@@ -2,9 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main, 'migration/**']
   pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
 permissions:
@@ -14,150 +13,150 @@ env:
   POETRY_KEYRING_ENABLED: "false"
 
 jobs:
-  lint:
-    name: Lint
+  quality:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
-      
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
+          python-version: '3.12'
+      - uses: snok/install-poetry@v1
         with:
           version: 2.3.1
-          virtualenvs-create: true
           virtualenvs-in-project: true
-      
-      - name: Load cached venv
-        id: cached-poetry-dependencies
-        uses: actions/cache@v4
+      - run: make install-dev
+      - name: Install locked example
+        working-directory: examples/store-api
+        run: poetry sync --with dev
+      - run: make check-proto
+      - run: make format FORMAT_FLAGS=--check
+      - run: make lint typecheck test-examples test-coverage
+      - run: make build check-identity
+      - name: Audit SDK and example dependencies
+        run: |
+          python -m venv "$RUNNER_TEMP/audit"
+          "$RUNNER_TEMP/audit/bin/pip" install pip-audit==2.10.1
+          make audit PIP_AUDIT="$RUNNER_TEMP/audit/bin/pip-audit"
+      - uses: actions/upload-artifact@v4
         with:
-          path: .venv
-          key: venv-${{ runner.os }}-3.10-${{ hashFiles('**/poetry.lock') }}
-      
-      - name: Install dependencies
-        run: make install-dev
-      
-      - name: Verify generated protocols
-        run: make check-proto
+          name: sdk-distributions
+          path: dist/
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage.xml
 
-      - name: Check formatting
-        run: make format FORMAT_FLAGS=--check
-
-      - name: Run linting
-        run: make lint
-
-  test:
-    name: Test Python ${{ matrix.python-version }}
+  installed-linux:
+    needs: quality
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
-    
+        python: ['3.10', '3.11', '3.12', '3.13', '3.14']
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: nzovu
+          POSTGRES_PASSWORD: sdk-fixture
+          POSTGRES_DB: nzovu
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U nzovu -d nzovu"
+          --health-interval 5s --health-timeout 5s --health-retries 12
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
-      
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
+          python-version: ${{ matrix.python }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdk-distributions
+          path: dist
+      - name: Read pinned server revision
+        id: server
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('commit=' + json.load(open('proto/SOURCE.json'))['commit'] + '\n')
+          PY
+      - name: Check private server access
+        env:
+          NZOVU_SOURCE_TOKEN: ${{ secrets.NZOVU_SOURCE_TOKEN }}
+        run: |
+          if [ -z "$NZOVU_SOURCE_TOKEN" ]; then
+            echo "::error::Configure NZOVU_SOURCE_TOKEN with read-only Contents access to adrien19/nzovu."
+            exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          repository: adrien19/nzovu
+          ref: ${{ steps.server.outputs.commit }}
+          path: .live-server
+          token: ${{ secrets.NZOVU_SOURCE_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: .live-server/go.mod
+          cache-dependency-path: .live-server/go.sum
+      - name: Build pinned server
+        working-directory: .live-server
+        run: CGO_ENABLED=1 go build -tags sqlite -o "$RUNNER_TEMP/nzovu" .
+      - name: Installed SDK matrix with both backends
+        env:
+          NZOVU_TEST_POSTGRES_DSN: postgres://nzovu:sdk-fixture@localhost:5432/nzovu?sslmode=disable
+          NZOVU_REQUIRE_BACKENDS: sqlite,postgres
+        run: |
+          python scripts/run_live_ownership.py --server-binary "$RUNNER_TEMP/nzovu" --temp-root "$RUNNER_TEMP" -- \
+            python scripts/check_artifacts.py --profiles minimum latest \
+              --run-tests --report reports/installed-linux-${{ matrix.python }}.json
+      - uses: snok/install-poetry@v1
+        if: matrix.python == '3.12'
         with:
           version: 2.3.1
-          virtualenvs-create: true
           virtualenvs-in-project: true
-      
-      - name: Load cached venv
-        id: cached-poetry-dependencies
-        uses: actions/cache@v4
+      - name: Live store example with installed wheel
+        if: matrix.python == '3.12'
+        working-directory: examples/store-api
+        env:
+          NZOVU_TEST_POSTGRES_DSN: postgres://nzovu:sdk-fixture@localhost:5432/nzovu?sslmode=disable
+          NZOVU_REQUIRE_BACKENDS: sqlite,postgres
+        run: |
+          poetry sync --with dev
+          poetry run python -m pip install --no-deps --force-reinstall ../../dist/*.whl
+          python ../../scripts/run_live_ownership.py --server-binary "$RUNNER_TEMP/nzovu" --temp-root "$RUNNER_TEMP" -- \
+            poetry run python -m pytest tests/test_live_store.py -v
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          path: .venv
-          key: venv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
-      
-      - name: Install dependencies
-        run: make install-dev
-      
-      - name: Run tests with coverage
-        run: make test-coverage
-      
-      - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@v4
-        if: matrix.python-version == '3.10'
-        with:
-          file: ./coverage.xml
-          fail_ci_if_error: false
+          name: installed-linux-${{ matrix.python }}
+          path: |
+            reports/
+            ${{ runner.temp }}/nzovu-sdk-live-*/*.log
 
-  typecheck:
-    name: Type Check
-    runs-on: ubuntu-latest
+  installed-desktop:
+    needs: quality
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
-      
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
         with:
-          version: 2.3.1
-          virtualenvs-create: true
-          virtualenvs-in-project: true
-      
-      - name: Load cached venv
-        id: cached-poetry-dependencies
-        uses: actions/cache@v4
+          name: sdk-distributions
+          path: dist
+      - name: Installed unit and transport matrix
+        run: python scripts/check_artifacts.py --profiles minimum latest --run-tests --report reports/installed-${{ runner.os }}.json
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          path: .venv
-          key: venv-${{ runner.os }}-3.10-${{ hashFiles('**/poetry.lock') }}
-      
-      - name: Install dependencies
-        run: make install-dev
-      
-      - name: Run type checking
-        run: make typecheck
-
-  build:
-    name: Build Package
-    runs-on: ubuntu-latest
-    needs: [lint, test, typecheck]
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
-      
-      - name: Install Poetry
-        uses: snok/install-poetry@v1
-        with:
-          version: 2.3.1
-          virtualenvs-create: true
-          virtualenvs-in-project: true
-      
-      - name: Install dependencies
-        run: make install-dev
-      
-      - name: Build package
-        run: make build
-
-      - name: Test installed base package without Pydantic
-        run: make check-base-tests
-
-      - name: Verify installed distributions
-        run: make check-artifacts
-      
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: dist/
+          name: installed-${{ runner.os }}
+          path: reports/

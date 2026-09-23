@@ -1,58 +1,34 @@
-import logging
-from nzovu.client import NzovuClient
-from nzovu.utils import QueueOptions, QueueType, LeasePolicyOptions, MessageRetentionPolicy, RetentionMode
-from config.settings import QUEUE_NAME_STORE_CART, QUEUE_NAME_CHECKOUT_CART, CHECKOUT_QUEUE_EXCLUSIVE_KEY
+import grpc
+from config.settings import CHECKOUT_QUEUE_EXCLUSIVE_KEY, QUEUE_NAME_CHECKOUT_CART, QUEUE_NAME_STORE_CART
 
-# Initialize logging
-logging.basicConfig(level=logging.INFO)
+from nzovu import LeasePolicyOptions, MessageRetentionPolicy, QueueOptions, QueueType, RetentionMode, RpcOperationError
+
+from ..sdk import invoke
 
 
-async def create_store_cart_queue(client: NzovuClient):
+def options(checkout=False):
+    return QueueOptions(
+        type=QueueType.EXCLUSIVE if checkout else QueueType.SIMPLE,
+        exclusivity_key=CHECKOUT_QUEUE_EXCLUSIVE_KEY if checkout else "",
+        max_attempts=3,
+        retention_policy=MessageRetentionPolicy(RetentionMode.RETAIN_DURATION, retention_seconds=3600),
+        lease_policy=LeasePolicyOptions(
+            base_lease="30s", max_extension="5m", heartbeat_timeout="10s", extend_step="5s"
+        ),
+    )
+
+
+async def ensure_queue(client, name, checkout=False):
     try:
-        queue_options = QueueOptions(
-            type=QueueType.SIMPLE,
-            exclusivity_key="",
-            max_attempts=2,
-            lease_policy=LeasePolicyOptions(
-                base_lease="1m",
-                max_extension="2m",
-                heartbeat_timeout="20s",
-                extend_step="15s",
-            ),
-            retention_policy=MessageRetentionPolicy(
-                mode=RetentionMode.RETAIN_DURATION,
-                retention_seconds=86400,  # 24 hours
-            ),
-        )
-
-        response = client.create_queue(name=QUEUE_NAME_STORE_CART, options=queue_options).to_dict()
-        logging.info("Create STORE Queue returned: ")
-        logging.info(response)
-    except Exception as e:
-        logging.error(f"===== STORE ERROR: occurred in create_store_cart_queue: {e} ==== ")
+        await invoke(client.create_queue, name=name, options=options(checkout))
+    except RpcOperationError as error:
+        if error.code() != grpc.StatusCode.ALREADY_EXISTS:
+            raise
 
 
-async def create_checkout_cart_queue(client: NzovuClient):
-    try:
-        queue_options = QueueOptions(
-            type=QueueType.EXCLUSIVE,
-            exclusivity_key=CHECKOUT_QUEUE_EXCLUSIVE_KEY,
-            max_attempts=-1,  # Unlimited attempts
-            lease_policy=LeasePolicyOptions(
-                base_lease="5m",
-                max_extension="3m",
-                heartbeat_timeout="1m",
-                extend_step="1m",
-            ),
-            retention_policy=MessageRetentionPolicy(
-                mode=RetentionMode.RETAIN_DURATION,
-                # retention_seconds=86400,  # 24 hours
-                retention_seconds=60,  # 1 minute
-            ),
-        )
+async def create_store_cart_queue(client):
+    await ensure_queue(client, QUEUE_NAME_STORE_CART)
 
-        response = client.create_queue(name=QUEUE_NAME_CHECKOUT_CART, options=queue_options).to_dict()
-        logging.info("Create CHECKOUT Queue returned: ")
-        logging.info(response)
-    except Exception as e:
-        logging.error(f"===== CHECKOUT ERROR: occurred in create_checkout_cart_queue: {e} ==== ")
+
+async def create_checkout_cart_queue(client):
+    await ensure_queue(client, QUEUE_NAME_CHECKOUT_CART, checkout=True)

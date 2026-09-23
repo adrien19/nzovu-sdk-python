@@ -1,114 +1,92 @@
+import asyncio
+import threading
+from unittest.mock import AsyncMock, Mock
+
+import grpc
 import pytest
-from unittest.mock import Mock, AsyncMock, patch
-from api.workers.store_cart_worker import process_cart
-from api.workers.queue_manager_worker import create_store_cart_queue, create_checkout_cart_queue
-from api.models.request_models import CartItems, Item
-from nzovu.utils import QueueType
+from api.application import create_app
+from api.sdk import invoke
+from api.workers.process_store_cart_worker import process_once
+from google.protobuf.json_format import ParseDict
+
+from nzovu import Claim, ResponseWrapper, RpcOperationError
+from nzovu.api.queueservice.v1 import request_response_pb2 as rpc
+
+from .test_store import failure
 
 
 @pytest.fixture
-def mock_client():
-    """Mock NzovuClient."""
-    return Mock()
+def claimed(sdk):
+    proto = ParseDict(
+        {
+            "message": {
+                "messageId": "cart",
+                "metadata": {"payload": {"data": {"items": [{"name": "apple", "quantity": 2, "price": 3.5}]}}},
+            },
+            "workerId": "worker",
+            "attemptId": "attempt",
+        },
+        rpc.GetNextMessageResponse(),
+    )
+    response = ResponseWrapper(proto)
+    response.claim = Claim("store-cart", "cart", "worker", "attempt")
+    sdk.get_next_message = (AsyncMock if sdk.asynchronous else Mock)(return_value=response)
+    return response.claim
 
 
-@pytest.fixture
-def sample_cart():
-    """Sample cart for testing."""
-    items = [
-        Item(name="Potato", quantity=1, price=10.0),
-        Item(name="Banana", quantity=2, price=15.0),
-    ]
-    return CartItems(items=items)
+async def test_processing_keeps_original_claim(sdk, claimed):
+    assert await process_once(sdk)
+    posted = sdk.post_message.call_args.args[0]
+    assert posted.message_id == "cart-checkout" and posted.data["total"] == 7
+    ack = sdk.acknowledge_message.call_args.args[0]
+    assert (ack.queue_name, ack.message_id, ack.worker_id, ack.attempt_id) == (
+        claimed.queue_name,
+        claimed.message_id,
+        claimed.worker_id,
+        claimed.attempt_id,
+    )
 
 
-class TestStoreCartWorker:
-    """Test suite for store cart worker."""
-
-    @pytest.mark.asyncio
-    async def test_process_cart_success(self, mock_client, sample_cart):
-        """Test successful cart processing."""
-        mock_response = Mock()
-        mock_response.to_dict.return_value = {"message_id": "test-123", "status": "queued"}
-        mock_client.post_message.return_value = mock_response
-
-        await process_cart("cart-123", sample_cart, mock_client)
-
-        # Verify post_message was called
-        assert mock_client.post_message.called
-        call_args = mock_client.post_message.call_args
-        params = call_args.kwargs["msg_params"]
-        assert params.queue_name == "store-cart"
-        assert "items" in params.data
-
-    @pytest.mark.asyncio
-    async def test_process_cart_with_error(self, mock_client, sample_cart, caplog):
-        """Test cart processing with error."""
-        mock_client.post_message.side_effect = Exception("Connection failed")
-
-        # Should not raise exception, but log error
-        await process_cart("cart-456", sample_cart, mock_client)
-
-        # Check error was logged
-        assert "Error occurred in process_card" in caplog.text
+async def test_uncertain_forward_does_not_ack(sdk, claimed):
+    sdk.post_message.side_effect = failure(grpc.StatusCode.UNAVAILABLE)
+    with pytest.raises(RpcOperationError):
+        await process_once(sdk)
+    sdk.acknowledge_message.assert_not_called()
+    sdk.stop_heartbeat.assert_called_once_with(claimed)
 
 
-class TestQueueManagerWorker:
-    """Test suite for queue manager workers."""
+async def test_duplicate_forward_can_finish_ack(sdk, claimed):
+    sdk.post_message.side_effect = failure(grpc.StatusCode.ALREADY_EXISTS)
+    assert await process_once(sdk)
+    sdk.acknowledge_message.assert_called_once()
 
-    @pytest.mark.asyncio
-    async def test_create_store_cart_queue_success(self, mock_client):
-        """Test successful store cart queue creation."""
-        mock_response = Mock()
-        mock_response.to_dict.return_value = {"queue": {"name": "store-cart"}}
-        mock_client.create_queue.return_value = mock_response
 
-        await create_store_cart_queue(mock_client)
+async def test_worker_tasks_join_on_shutdown(sdk):
+    sdk.get_next_message = (AsyncMock if sdk.asynchronous else Mock)(side_effect=failure(grpc.StatusCode.NOT_FOUND))
+    app = create_app(sdk.asynchronous, client_factory=lambda **kwargs: sdk)
+    async with app.router.lifespan_context(app):
+        tasks = app.state.worker_tasks
+        assert len(tasks) == 2
+        await asyncio.sleep(0.02)
+    assert all(task.done() for task in tasks)
+    sdk.close.assert_called_once()
 
-        # Verify create_queue was called with correct parameters
-        assert mock_client.create_queue.called
-        call_args = mock_client.create_queue.call_args
-        assert call_args.kwargs["name"] == "store-cart"
 
-        options = call_args.kwargs["options"]
-        assert options.type == QueueType.SIMPLE
-        assert options.max_attempts == 2
+async def test_sync_rpc_does_not_block_and_cancellation_joins():
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
 
-    @pytest.mark.asyncio
-    async def test_create_store_cart_queue_error(self, mock_client, caplog):
-        """Test store cart queue creation with error."""
-        mock_client.create_queue.side_effect = Exception("Queue already exists")
+    def blocked():
+        entered.set()
+        release.wait(1)
+        finished.set()
 
-        await create_store_cart_queue(mock_client)
-
-        # Check error was logged
-        assert "STORE ERROR" in caplog.text
-
-    @pytest.mark.asyncio
-    async def test_create_checkout_cart_queue_success(self, mock_client):
-        """Test successful checkout cart queue creation."""
-        mock_response = Mock()
-        mock_response.to_proto.return_value = Mock()
-        mock_client.create_queue.return_value = mock_response
-
-        await create_checkout_cart_queue(mock_client)
-
-        # Verify create_queue was called with correct parameters
-        assert mock_client.create_queue.called
-        call_args = mock_client.create_queue.call_args
-        assert call_args.kwargs["name"] == "checkout-cart"
-
-        options = call_args.kwargs["options"]
-        assert options.type == QueueType.EXCLUSIVE
-        assert options.exclusivity_key == "checkout-worker-1"
-        assert options.max_attempts == -1
-
-    @pytest.mark.asyncio
-    async def test_create_checkout_cart_queue_error(self, mock_client, caplog):
-        """Test checkout cart queue creation with error."""
-        mock_client.create_queue.side_effect = Exception("Invalid configuration")
-
-        await create_checkout_cart_queue(mock_client)
-
-        # Check error was logged
-        assert "CHECKOUT ERROR" in caplog.text
+    task = asyncio.create_task(invoke(blocked))
+    while not entered.is_set():
+        await asyncio.sleep(0.001)
+    task.cancel()
+    await asyncio.sleep(0.01)
+    assert not task.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert finished.is_set()

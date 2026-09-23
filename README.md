@@ -2,9 +2,9 @@
 
 Python distribution/import: **`nzovu`**. Repository: **`nzovu-sdk-python`**.
 
-This checkout prepares `0.0.1`. Package identity and generated protocol modules
-and SDK-PR2 request/response contracts are migrated; SDK-PR3 adds authenticated
-transport and claim-scoped worker lifecycle. It is not yet a published or release-ready client.
+This checkout prepares `0.0.1`. Both clients implement all 31 RPCs, authenticated transport, explicit claims and
+bounded worker lifecycle. SDK-PR4 adds live backend checks, migrated examples and
+installed-distribution validation. Publication remains pending the review and CI gates recorded in [migration status](docs/MIGRATION_STATUS.md).
 
 ## Development
 
@@ -20,6 +20,7 @@ make format FORMAT_FLAGS=--check
 make build
 make check-artifacts
 make check-base-tests
+make check-identity
 ```
 
 After installation:
@@ -59,3 +60,15 @@ Schedule options no longer accept `exclusivity_key`.
 
 The original MIT license is retained. Source ancestry and bootstrap validation
 are recorded in [the baseline](docs/MIGRATION_BASELINE.md).
+
+## Examples and compatibility
+
+The [store API](examples/store-api/README.md) supports sync and async clients with
+shared client shutdown, claim-aware workers and PostgreSQL Compose fixtures.
+[Bulk posting](examples/bulk.py) demonstrates atomic and best-effort outcomes.
+
+The installed-artifact matrix covers Python 3.10–3.14, wheel/sdist, base/Pydantic,
+and minimum/latest runtime dependencies. Linux live tests exercise SQLite and
+PostgreSQL; macOS/Windows jobs exercise installed unit and transport tests.
+See migration status for validation results and remaining gates, and
+[CONTRIBUTING.md](CONTRIBUTING.md) for repeatable commands.

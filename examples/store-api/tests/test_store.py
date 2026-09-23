@@ -1,161 +1,86 @@
+import grpc
 import pytest
+from api.application import create_app
 from fastapi.testclient import TestClient
-from unittest.mock import Mock, patch, MagicMock
-from api.main import app
-from api.models.request_models import CartItems, Item
+
+from nzovu import RpcOperationError
+
+CART = {"items": [{"name": "apple", "quantity": 2, "price": 3.5}]}
+
+
+class Failure(grpc.RpcError):
+    def __init__(self, status):
+        self.status = status
+
+    def code(self):
+        return self.status
+
+    def details(self):
+        return "fixture failure"
+
+
+def failure(status):
+    return RpcOperationError("fixture failure", cause=Failure(status))
 
 
 @pytest.fixture
-def mock_nzovu_client():
-    """Mock NzovuClient for testing."""
-    with patch("api.routes.store.NzovuClient") as mock_client_class:
-        mock_client = Mock()
-        mock_client_class.return_value = mock_client
-        yield mock_client
+def web(sdk):
+    app = create_app(sdk.asynchronous, client_factory=lambda **kwargs: sdk, workers_enabled=False)
+    with TestClient(app) as client:
+        yield client
+    sdk.close.assert_called_once()
+    assert app.state.nzovu is None
 
 
-@pytest.fixture
-def client():
-    """FastAPI test client."""
-    return TestClient(app)
+def test_shared_client_and_queue_setup(web, sdk):
+    assert sdk.create_queue.call_count == 2
+    response = web.post("/store/cart", params={"cart_id": "cart"}, json=CART)
+    assert response.status_code == 200 and response.json()["status"] == "queued"
+    assert sdk.post_message.call_args.args[0].message_id == "cart"
+    assert web.get("/store/health").json()["active_heartbeats"] == 0
 
 
-class TestStoreAPI:
-    """Test suite for Store API endpoints."""
+def test_enqueue_failure_is_reported(web, sdk):
+    sdk.post_message.side_effect = failure(grpc.StatusCode.UNAVAILABLE)
+    assert web.post("/store/cart?cart_id=cart", json=CART).status_code == 503
 
-    def test_health_check(self, client):
-        """Test health check endpoint."""
-        response = client.get("/store/health")
-        assert response.status_code == 200
-        assert response.json() == {"status": "healthy", "service": "store-api"}
 
-    def test_post_cart_items_success(self, client, mock_nzovu_client):
-        """Test successful cart submission."""
-        # Mock the post_message response
-        mock_response = Mock()
-        mock_response.to_dict.return_value = {"message_id": "test-123", "status": "queued"}
-        mock_nzovu_client.post_message.return_value = mock_response
+def test_queue_stats_and_pagination(web, sdk):
+    assert web.get("/store/queue/store-cart/stats").json()["stats"]["stateCounts"]["PENDING"] == "3"
+    assert web.get("/store/queue/store-cart/messages/pending").json()["total_messages"] == 4
+    result = web.get("/store/queues?prefix=store&page_size=1&page_token=next")
+    assert result.json()["nextPageToken"] == "cursor"
+    sdk.list_queues.assert_called_once_with(prefix="store", page_size=1, page_token="next")
+    assert web.get("/store/queues?page_size=1001").status_code == 422
 
-        cart_data = {
-            "items": [
-                {"name": "Potato", "quantity": 1, "price": 10.0},
-                {"name": "Banana", "quantity": 2, "price": 15.0},
-            ]
-        }
 
-        with patch("api.routes.store.get_nzovu_client", return_value=mock_nzovu_client):
-            response = client.post("/store/cart?cart_id=test-cart-123", json=cart_data)
+def test_delete_and_not_found(web, sdk):
+    assert web.delete("/store/queue/example").json()["success"]
+    sdk.delete_queue.assert_called_once_with(name="example")
+    sdk.get_queue_state.side_effect = failure(grpc.StatusCode.NOT_FOUND)
+    assert web.get("/store/queue/missing/stats").status_code == 404
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "success"
-        assert "queued successfully" in data["message"]
 
-    def test_post_cart_items_validation_error(self, client):
-        """Test cart submission with invalid data."""
-        invalid_cart = {"items": [{"name": "Potato", "quantity": "invalid", "price": 10.0}]}  # Invalid quantity type
+@pytest.mark.parametrize(
+    "cart_id,cart",
+    [("bad id", CART), ("cart", {"items": []}), ("cart", {"items": [{"name": "apple", "price": -1, "quantity": 1}]})],
+)
+def test_invalid_requests_do_not_enqueue(web, sdk, cart_id, cart):
+    assert web.post("/store/cart", params={"cart_id": cart_id}, json=cart).status_code == 422
+    sdk.post_message.assert_not_called()
 
-        response = client.post("/store/cart", json=invalid_cart)
-        assert response.status_code == 422  # Validation error
 
-    def test_get_queue_stats_success(self, client, mock_nzovu_client):
-        """Test getting queue statistics."""
-        mock_response = Mock()
-        mock_response.to_dict.return_value = {
-            "queue": {
-                "name": "store-cart",
-                "message_count": 10,
-                "pending_message_count": 5,
-            }
-        }
-        mock_nzovu_client.get_queue.return_value = mock_response
+def test_startup_failure_closes_client(sdk):
+    sdk.create_queue.side_effect = failure(grpc.StatusCode.UNAVAILABLE)
+    app = create_app(sdk.asynchronous, client_factory=lambda **kwargs: sdk)
+    with pytest.raises(RpcOperationError):
+        with TestClient(app):
+            pass
+    sdk.close.assert_called_once()
 
-        with patch("api.routes.store.get_nzovu_client", return_value=mock_nzovu_client):
-            response = client.get("/store/queue/store-cart/stats")
 
-        assert response.status_code == 200
-        data = response.json()
-        assert data["queue_name"] == "store-cart"
-        assert "stats" in data
-
-    def test_get_queue_stats_not_found(self, client, mock_nzovu_client):
-        """Test getting stats for non-existent queue."""
-        mock_nzovu_client.get_queue.side_effect = Exception("Queue not found")
-
-        with patch("api.routes.store.get_nzovu_client", return_value=mock_nzovu_client):
-            response = client.get("/store/queue/non-existent/stats")
-
-        assert response.status_code == 404
-
-    def test_list_queues_success(self, client, mock_nzovu_client):
-        """Test listing queues."""
-        mock_response = Mock()
-        mock_response.to_dict.return_value = {
-            "queues": [
-                {"name": "store-cart", "message_count": 10},
-                {"name": "checkout-cart", "message_count": 5},
-            ],
-            "total_count": 2,
-        }
-        mock_nzovu_client.list_queues.return_value = mock_response
-
-        with patch("api.routes.store.get_nzovu_client", return_value=mock_nzovu_client):
-            response = client.get("/store/queues")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data["queues"]) == 2
-        assert data["total_count"] == 2
-
-    def test_list_queues_with_prefix(self, client, mock_nzovu_client):
-        """Test listing queues with prefix filter."""
-        mock_response = Mock()
-        mock_response.to_dict.return_value = {
-            "queues": [{"name": "store-cart", "message_count": 10}],
-            "total_count": 1,
-        }
-        mock_nzovu_client.list_queues.return_value = mock_response
-
-        with patch("api.routes.store.get_nzovu_client", return_value=mock_nzovu_client):
-            response = client.get("/store/queues?prefix=store")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data["queues"]) == 1
-        mock_nzovu_client.list_queues.assert_called_once_with(prefix="store", limit=100)
-
-    def test_get_pending_messages_count(self, client, mock_nzovu_client):
-        """Test getting pending message count."""
-        mock_response = Mock()
-        mock_response.to_dict.return_value = {
-            "queue": {
-                "name": "store-cart",
-                "message_count": 20,
-                "pending_message_count": 8,
-            }
-        }
-        mock_nzovu_client.get_queue.return_value = mock_response
-
-        with patch("api.routes.store.get_nzovu_client", return_value=mock_nzovu_client):
-            response = client.get("/store/queue/store-cart/messages/pending")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["queue_name"] == "store-cart"
-        assert data["pending_messages"] == 8
-        assert data["total_messages"] == 20
-
-    def test_delete_queue_success(self, client, mock_nzovu_client):
-        """Test deleting a queue."""
-        mock_response = Mock()
-        mock_response.to_dict.return_value = {"success": True}
-        mock_nzovu_client.delete_queue.return_value = mock_response
-
-        with patch("api.routes.store.get_nzovu_client", return_value=mock_nzovu_client):
-            response = client.delete("/store/queue/test-queue")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "success"
-        assert "deleted successfully" in data["message"]
-        mock_nzovu_client.delete_queue.assert_called_once_with(name="test-queue")
+def test_existing_queues_are_accepted(sdk):
+    sdk.create_queue.side_effect = failure(grpc.StatusCode.ALREADY_EXISTS)
+    app = create_app(sdk.asynchronous, client_factory=lambda **kwargs: sdk, workers_enabled=False)
+    with TestClient(app) as client:
+        assert client.get("/store/health").status_code == 200

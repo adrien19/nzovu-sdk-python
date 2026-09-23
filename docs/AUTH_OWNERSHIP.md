@@ -114,5 +114,7 @@ make check-live-ownership NZOVU_SERVER_BINARY=/tmp/nzovu-sdk-server
 The harness prints temporary fixture/log paths and always shuts down its servers.
 For Docker Desktop, use `--host host.docker.internal`, mount the fixture's temp
 root into the container at the same path, and forward `NZOVU_LIVE_CONFIG`.
-PostgreSQL, the broader live API matrix and other Python/OS versions remain
-SDK-PR4 gates. Publishing remains disabled.
+Set `NZOVU_TEST_POSTGRES_DSN` to include PostgreSQL TLS/mTLS profiles.
+`make check-live` requires both backends and runs ownership plus all live RPC
+contracts. See [migration status](MIGRATION_STATUS.md) for executed runtime
+results, server defects and remaining release gates. Publishing remains disabled.
